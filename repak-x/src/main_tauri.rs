@@ -3153,7 +3153,7 @@ async fn cleanup_ubulk_for_inline_textures(output_dir: &PathBuf) {
 /// # Returns
 /// Number of files extracted
 #[tauri::command]
-async fn extract_mod_assets(mod_path: String, dest_path: String, state: State<'_, Arc<Mutex<AppState>>>) -> Result<usize, String> {
+async fn extract_mod_assets(mod_path: String, dest_path: String, window: Window, state: State<'_, Arc<Mutex<AppState>>>) -> Result<usize, String> {
     // Set USMAP_PATH from AppState so UAssetTool can load mappings
     {
         let state_guard = state.lock().unwrap();
@@ -3165,10 +3165,10 @@ async fn extract_mod_assets(mod_path: String, dest_path: String, state: State<'_
             }
         }
     }
-    extract_mod_assets_inner(mod_path, dest_path).await
+    extract_mod_assets_inner(mod_path, dest_path, window).await
 }
 
-async fn extract_mod_assets_inner(mod_path: String, dest_path: String) -> Result<usize, String> {
+async fn extract_mod_assets_inner(mod_path: String, dest_path: String, window: Window) -> Result<usize, String> {
     let mut path = PathBuf::from(&mod_path);
     if !path.exists() {
         return Err(format!("File not found: {}", mod_path));
@@ -3230,12 +3230,29 @@ async fn extract_mod_assets_inner(mod_path: String, dest_path: String) -> Result
         "utoc" => {
             // IoStore extraction using UAssetTool
             log::info!("Starting IoStore extraction from {:?} to {:?}", path, output_dir);
+            
+            // Emit start progress
+            let _ = window.emit("extraction_progress", ExtractionProgress {
+                current_file: mod_name.clone(),
+                files_extracted: 0,
+                total_files: 0,
+                percentage: 0.0,
+                status: "extracting".to_string(),
+            });
+            
             let file_count = uasset_toolkit::extract_iostore(
                 &path.to_string_lossy(),
                 &output_dir.to_string_lossy(),
                 None, // Use default AES key
             ).map_err(|e| {
                 log::error!("IoStore extraction failed: {}", e);
+                let _ = window.emit("extraction_progress", ExtractionProgress {
+                    current_file: mod_name.clone(),
+                    files_extracted: 0,
+                    total_files: 0,
+                    percentage: 0.0,
+                    status: "error".to_string(),
+                });
                 format!("Failed to extract IoStore: {}", e)
             })?;
             
@@ -3243,6 +3260,15 @@ async fn extract_mod_assets_inner(mod_path: String, dest_path: String) -> Result
             
             // Post-extraction cleanup: Remove .ubulk files for textures with inline data
             cleanup_ubulk_for_inline_textures(&output_dir).await;
+            
+            // Emit completion progress
+            let _ = window.emit("extraction_progress", ExtractionProgress {
+                current_file: mod_name.clone(),
+                files_extracted: file_count,
+                total_files: file_count,
+                percentage: 100.0,
+                status: "complete".to_string(),
+            });
             
             Ok(file_count)
         }
@@ -3267,6 +3293,15 @@ async fn extract_mod_assets_inner(mod_path: String, dest_path: String) -> Result
             
             let file_count = pak_reader.files().len();
             
+            // Emit start progress
+            let _ = window.emit("extraction_progress", ExtractionProgress {
+                current_file: mod_name.clone(),
+                files_extracted: 0,
+                total_files: file_count,
+                percentage: 0.0,
+                status: "extracting".to_string(),
+            });
+            
             let installable_mod = InstallableMod {
                 mod_name: mod_name.clone(),
                 mod_type: "".to_string(),
@@ -3275,7 +3310,25 @@ async fn extract_mod_assets_inner(mod_path: String, dest_path: String) -> Result
                 ..Default::default()
             };
             
-            extract_pak_to_dir(&installable_mod, output_dir.clone()).map_err(|e| e.to_string())?;
+            extract_pak_to_dir(&installable_mod, output_dir.clone()).map_err(|e| {
+                let _ = window.emit("extraction_progress", ExtractionProgress {
+                    current_file: mod_name.clone(),
+                    files_extracted: 0,
+                    total_files: file_count,
+                    percentage: 0.0,
+                    status: "error".to_string(),
+                });
+                e.to_string()
+            })?;
+            
+            // Emit completion progress
+            let _ = window.emit("extraction_progress", ExtractionProgress {
+                current_file: mod_name.clone(),
+                files_extracted: file_count,
+                total_files: file_count,
+                percentage: 100.0,
+                status: "complete".to_string(),
+            });
             
             log::info!("Extracted {} files from PAK to {:?}", file_count, output_dir);
             Ok(file_count)
@@ -3289,7 +3342,7 @@ async fn extract_mod_assets_inner(mod_path: String, dest_path: String) -> Result
             
             // Recursively call with the .utoc path
             let utoc_str = utoc_path.to_string_lossy().to_string();
-            Box::pin(extract_mod_assets_inner(utoc_str, dest_path)).await
+            Box::pin(extract_mod_assets_inner(utoc_str, dest_path, window)).await
         }
         "bak_repak" => {
             // Disabled PAK file - extract it as a regular PAK
@@ -3312,6 +3365,15 @@ async fn extract_mod_assets_inner(mod_path: String, dest_path: String) -> Result
             
             let file_count = pak_reader.files().len();
             
+            // Emit start progress
+            let _ = window.emit("extraction_progress", ExtractionProgress {
+                current_file: mod_name.clone(),
+                files_extracted: 0,
+                total_files: file_count,
+                percentage: 0.0,
+                status: "extracting".to_string(),
+            });
+            
             let installable_mod = InstallableMod {
                 mod_name: mod_name.clone(),
                 mod_type: "".to_string(),
@@ -3320,7 +3382,25 @@ async fn extract_mod_assets_inner(mod_path: String, dest_path: String) -> Result
                 ..Default::default()
             };
             
-            extract_pak_to_dir(&installable_mod, output_dir.clone()).map_err(|e| e.to_string())?;
+            extract_pak_to_dir(&installable_mod, output_dir.clone()).map_err(|e| {
+                let _ = window.emit("extraction_progress", ExtractionProgress {
+                    current_file: mod_name.clone(),
+                    files_extracted: 0,
+                    total_files: file_count,
+                    percentage: 0.0,
+                    status: "error".to_string(),
+                });
+                e.to_string()
+            })?;
+            
+            // Emit completion progress
+            let _ = window.emit("extraction_progress", ExtractionProgress {
+                current_file: mod_name.clone(),
+                files_extracted: file_count,
+                total_files: file_count,
+                percentage: 100.0,
+                status: "complete".to_string(),
+            });
             
             log::info!("Extracted {} files from disabled PAK to {:?}", file_count, output_dir);
             Ok(file_count)
@@ -4176,6 +4256,16 @@ struct UpdateDownloadProgress {
     total_bytes: Option<u64>,
     percentage: f32,
     status: String, // "downloading", "extracting", "ready", "error"
+}
+
+/// Progress information for asset extraction
+#[derive(Clone, Serialize, Deserialize)]
+struct ExtractionProgress {
+    current_file: String,
+    files_extracted: usize,
+    total_files: usize,
+    percentage: f32,
+    status: String, // "extracting", "complete", "error"
 }
 
 /// Download an update from the given URL
