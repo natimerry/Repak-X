@@ -51,7 +51,7 @@ export default function ToolsPanel({ onClose, mods = [], onToggleMod }: ToolsPan
 
         // Fallback to any LOD disabler mod
         return mods.find(mod => {
-            const modName = mod.custom_name || mod.path?.split('\\').pop() || '';
+            const modName = mod.custom_name || mod.path?.split(/[/\\]/).pop() || '';
             return modName.toLowerCase().includes('lods_disabler') ||
                 mod.path?.toLowerCase().includes('lods_disabler');
         });
@@ -68,7 +68,7 @@ export default function ToolsPanel({ onClose, mods = [], onToggleMod }: ToolsPan
     const lodModDisplayName = useMemo(() => {
         if (!lodDisablerMod) return '';
         if (isBundledMod) return 'LOD Disabler (Built-in)';
-        return lodDisablerMod.custom_name || lodDisablerMod.path?.split('\\').pop() || 'Unknown';
+        return lodDisablerMod.custom_name || lodDisablerMod.path?.split(/[/\\]/).pop() || 'Unknown';
     }, [lodDisablerMod, isBundledMod]);
 
     // Check skip launcher status on mount

@@ -122,7 +122,7 @@ try {
     # Ensure no previous instances are running and locking files
     Kill-Process-Safe "UAssetTool"
     
-    $toolProject = Join-Path $workspaceRoot "UassetToolRivals\src\UAssetTool\UAssetTool.csproj"
+    $toolProject = Join-Path $workspaceRoot "UAssetToolRivals\src\UAssetTool\UAssetTool.csproj"
     if (Test-Path $toolProject) {
         $toolOutput = Join-Path $workspaceRoot "target\uassettool"
         # Clean stale artifacts (e.g. ue4-dds-tools, .pdb) from previous builds

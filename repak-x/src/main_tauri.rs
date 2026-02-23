@@ -5866,6 +5866,7 @@ async fn p2p_is_sharing(p2p_state: State<'_, P2PState>) -> Result<bool, String> 
 async fn p2p_start_receiving(
     connection_string: String,
     client_name: Option<String>,
+    folder_id: Option<String>,
     window: Window,
     state: State<'_, Arc<Mutex<AppState>>>,
     p2p_state: State<'_, P2PState>,
@@ -5875,10 +5876,16 @@ async fn p2p_start_receiving(
     watcher_state.paused.store(true, Ordering::Relaxed);
     info!("[P2P] File watcher paused for transfer");
 
-    let output_dir = {
+    let game_path = {
         let state_guard = state.lock().unwrap();
         state_guard.game_path.clone()
     };
+
+    let output_dir = match folder_id {
+        Some(ref id) if !id.is_empty() => game_path.join(id),
+        _ => game_path,
+    };
+    info!("[P2P] Receive destination: {}", output_dir.display());
     
     p2p_state.manager
         .start_receiving(&connection_string, output_dir, client_name, window)

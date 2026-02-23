@@ -81,7 +81,7 @@ const TOUR_STEPS: TourStep[] = [
     {
         target: '[data-tour="settings-btn"]',
         title: 'Settings',
-        description: 'Configure your game path, usmap file, and app preferences to your liking. You can replay this tour from Settings anytime!',
+        description: 'Configure your game path and app preferences to your liking. You can replay this tour from Settings anytime!',
         placement: 'left',
     },
 ]

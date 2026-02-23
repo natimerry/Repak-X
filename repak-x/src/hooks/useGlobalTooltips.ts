@@ -9,6 +9,16 @@ export const useGlobalTooltips = () => {
     let activeTooltip: HTMLDivElement | null = null;
     let showTimeout: ReturnType<typeof setTimeout> | null = null;
     let hideTimeout: ReturnType<typeof setTimeout> | null = null;
+    let currentTarget: HTMLElement | null = null;
+
+    const restoreTitle = (target: HTMLElement | null) => {
+      if (!target) return;
+      const originalTitle = target.getAttribute('data-original-title');
+      if (originalTitle) {
+        target.setAttribute('title', originalTitle);
+        target.removeAttribute('data-original-title');
+      }
+    };
 
     const createTooltip = (text: string, targetRect: DOMRect): HTMLDivElement => {
       const tooltip = document.createElement('div');
@@ -58,18 +68,16 @@ export const useGlobalTooltips = () => {
     };
 
     const removeTooltip = () => {
-      if (activeTooltip) {
-        activeTooltip.classList.remove('visible');
-        setTimeout(() => {
-          if (activeTooltip && activeTooltip.parentNode) {
-            activeTooltip.parentNode.removeChild(activeTooltip);
-          }
-          activeTooltip = null;
-        }, 200);
-      }
+      if (!activeTooltip) return;
+      const tooltipToRemove = activeTooltip;
+      activeTooltip = null;
+      tooltipToRemove.classList.remove('visible');
+      setTimeout(() => {
+        if (tooltipToRemove.parentNode) {
+          tooltipToRemove.parentNode.removeChild(tooltipToRemove);
+        }
+      }, 200);
     };
-
-    let currentTarget: HTMLElement | null = null;
 
     const clearTimer = (timer: ReturnType<typeof setTimeout> | null) => {
       if (timer !== null) {
@@ -86,6 +94,12 @@ export const useGlobalTooltips = () => {
       const title = target.getAttribute('title');
       if (!title) return;
 
+      // If moving to another tooltip target, restore previous title and clear old tooltip
+      if (currentTarget && currentTarget !== target) {
+        restoreTitle(currentTarget);
+        removeTooltip();
+      }
+
       // Store current target
       currentTarget = target;
 
@@ -99,7 +113,9 @@ export const useGlobalTooltips = () => {
       showTimeout = setTimeout(() => {
         if (currentTarget === target) {
           const rect = target.getBoundingClientRect();
+          removeTooltip();
           activeTooltip = createTooltip(title, rect);
+          console.debug('[GlobalTooltip] shown', { title, targetClass: target.className });
         }
       }, 500); // 500ms delay like native tooltips
     };
@@ -108,18 +124,19 @@ export const useGlobalTooltips = () => {
       const eventTarget = e.target;
       if (!(eventTarget instanceof Element)) return;
       const target = eventTarget.closest('[data-original-title]') as HTMLElement | null;
+      const related = e.relatedTarget instanceof Node ? e.relatedTarget : null;
+
+      // Ignore transitions within the same tooltip target subtree
+      if (target && related && target.contains(related)) {
+        return;
+      }
 
       // Always clear timeouts and remove tooltip on any mouse leave
       clearTimer(showTimeout);
       clearTimer(hideTimeout);
 
       if (target) {
-        // Restore original title
-        const originalTitle = target.getAttribute('data-original-title');
-        if (originalTitle) {
-          target.setAttribute('title', originalTitle);
-          target.removeAttribute('data-original-title');
-        }
+        restoreTitle(target);
       }
 
       // Clear current target
@@ -134,18 +151,33 @@ export const useGlobalTooltips = () => {
       removeTooltip();
     };
 
+    const handleViewportChange = () => {
+      clearTimer(showTimeout);
+      removeTooltip();
+      restoreTitle(currentTarget);
+      currentTarget = null;
+    };
+
     // Add event listeners
     document.addEventListener('mouseover', handleMouseEnter, true);
     document.addEventListener('mouseout', handleMouseLeave, true);
     document.addEventListener('mousedown', handleMouseDown, true);
+    window.addEventListener('blur', handleViewportChange);
+    window.addEventListener('scroll', handleViewportChange, true);
+    window.addEventListener('resize', handleViewportChange);
 
     // Cleanup
     return () => {
       document.removeEventListener('mouseover', handleMouseEnter, true);
       document.removeEventListener('mouseout', handleMouseLeave, true);
       document.removeEventListener('mousedown', handleMouseDown, true);
+      window.removeEventListener('blur', handleViewportChange);
+      window.removeEventListener('scroll', handleViewportChange, true);
+      window.removeEventListener('resize', handleViewportChange);
       clearTimer(showTimeout);
       clearTimer(hideTimeout);
+      restoreTitle(currentTarget);
+      currentTarget = null;
       removeTooltip();
     };
   }, []);

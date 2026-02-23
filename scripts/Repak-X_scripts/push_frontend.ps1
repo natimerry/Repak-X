@@ -108,6 +108,33 @@ if (-not $staged) {
     exit 0
 }
 
+# Ask if user wants to add extra files
+Write-Host ""
+$addExtra = Read-Host "Add extra files to this commit? (y/N)"
+if ($addExtra -eq "y" -or $addExtra -eq "Y") {
+    Write-Host "`nEnter file paths to add (one per line, empty line to finish):" -ForegroundColor Cyan
+    $extraFiles = @()
+    while ($true) {
+        $file = Read-Host "File path"
+        if ([string]::IsNullOrWhiteSpace($file)) {
+            break
+        }
+        $extraFiles += $file
+    }
+    
+    if ($extraFiles.Count -gt 0) {
+        Write-Host "`nAdding extra files..." -ForegroundColor Cyan
+        foreach ($file in $extraFiles) {
+            if (Test-Path $file) {
+                git add $file
+                Write-Host "  [+] $file" -ForegroundColor Green
+            } else {
+                Write-Host "  [!] File not found: $file" -ForegroundColor Red
+            }
+        }
+    }
+}
+
 Write-Host "`nFiles to commit:" -ForegroundColor Green
 # Show with colored status indicators
 git diff --cached --name-status | ForEach-Object {

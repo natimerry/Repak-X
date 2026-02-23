@@ -1,6 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { open } from '@tauri-apps/plugin-dialog'
-import { invoke } from '@tauri-apps/api/core'
 import { AnimatedThemeToggler } from './ui/AnimatedThemeToggler'
 import Switch from './ui/Switch'
 import Checkbox from './ui/Checkbox'
@@ -62,7 +60,6 @@ type SettingsPanelProps = {
 
 export default function SettingsPanel({ settings, onSave, onClose, theme, setTheme, accentColor, setAccentColor, gamePath, onAutoDetectGamePath, onBrowseGamePath, isGamePathLoading, setParallelProcessing, onCheckForUpdates, onViewChangelog, isCheckingUpdates, onReplayTour, onOpenShortcuts }: SettingsPanelProps) {
   const alert = useAlert();
-  const [globalUsmap, setGlobalUsmap] = useState(settings.globalUsmap || '');
   const [hideSuffix, setHideSuffix] = useState(settings.hideSuffix || false);
   const [autoOpenDetails, setAutoOpenDetails] = useState(settings.autoOpenDetails || false);
   const [showHeroIcons, setShowHeroIcons] = useState(settings.showHeroIcons || false);
@@ -73,7 +70,6 @@ export default function SettingsPanel({ settings, onSave, onClose, theme, setThe
   const [parallelProcessing, setLocalParallelProcessing] = useState(settings.parallelProcessing || false);
   const [holdToDelete, setHoldToDelete] = useState(settings.holdToDelete !== false);
   const [enableDrp, setEnableDrp] = useState(settings.enableDrp !== false);
-  const [usmapStatus, setUsmapStatus] = useState('');
   const [showRatMode, setShowRatMode] = useState(false);
 
   // Easter egg: briefly show "Rat Mode" when switching to light theme
@@ -85,19 +81,9 @@ export default function SettingsPanel({ settings, onSave, onClose, theme, setThe
     setTheme(newTheme);
   };
 
-  // Clear usmap status after 5 seconds
-  React.useEffect(() => {
-    if (usmapStatus) {
-      const timer = setTimeout(() => {
-        setUsmapStatus('');
-      }, 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [usmapStatus]);
-
   const handleSave = () => {
     onSave({
-      globalUsmap,
+      globalUsmap: settings.globalUsmap || '',
       hideSuffix,
       autoOpenDetails,
       showHeroIcons,
@@ -115,35 +101,10 @@ export default function SettingsPanel({ settings, onSave, onClose, theme, setThe
 
   // Sync local state with props when opening/changing
   useEffect(() => {
-    if (settings.globalUsmap) {
-      setGlobalUsmap(settings.globalUsmap);
-    }
     if (settings.enableDrp !== undefined) {
       setEnableDrp(settings.enableDrp);
     }
-  }, [settings.globalUsmap, settings.enableDrp]);
-
-  const handleBrowseUsmap = async () => {
-    try {
-      const selected = await open({
-        filters: [{
-          name: 'USmap Files',
-          extensions: ['usmap']
-        }],
-        title: 'Select USmap File'
-      });
-
-      if (selected) {
-        // Call backend to copy file to Usmap/ folder
-        const filename = await invoke<string>('copy_usmap_to_folder', { sourcePath: selected });
-        setGlobalUsmap(filename);
-        setUsmapStatus(`✓ USmap file copied to Usmap folder: ${filename}`);
-      }
-    } catch (error) {
-      console.error('Failed to select USmap:', error);
-      setUsmapStatus(`✗ Error: ${error}`);
-    }
-  };
+  }, [settings.enableDrp]);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -191,41 +152,6 @@ export default function SettingsPanel({ settings, onSave, onClose, theme, setThe
                   </button>
                 </div>
               </div>
-            </div>
-          </div>
-
-          <div className="setting-section">
-            <h3>USMAP Mapping File</h3>
-            <div className="setting-group">
-              <p style={{ fontSize: '0.9rem', opacity: 0.7, marginBottom: '0.5rem' }}>Global .usmap file path for asset mapping.</p>
-              <div className="combined-input-group">
-                <input
-                  type="text"
-                  value={globalUsmap}
-                  onChange={(e) => setGlobalUsmap(e.target.value)}
-                  placeholder="Path to global USMAP file..."
-                  className="integrated-input"
-                  readOnly
-                />
-                <div className="input-actions">
-                  <button
-                    onClick={handleBrowseUsmap}
-                    className="action-btn icon-only"
-                    title="Select USmap File"
-                  >
-                    <LuFolderInput size={16} />
-                  </button>
-                </div>
-              </div>
-              {usmapStatus && (
-                <p style={{
-                  fontSize: '0.85rem',
-                  marginTop: '0.5rem',
-                  color: usmapStatus.startsWith('✓') ? '#4CAF50' : '#ff5252'
-                }}>
-                  {usmapStatus}
-                </p>
-              )}
             </div>
           </div>
 

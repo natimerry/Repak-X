@@ -34,8 +34,8 @@ git add "*.md"
 git add ".gitignore"
 
 # 4. Add submodule pointer if it changed
-Write-Host "Staging submodule reference (UassetToolRivals)..."
-git add "UassetToolRivals"
+Write-Host "Staging submodule reference (UAssetToolRivals)..."
+git add "UAssetToolRivals"
 
 # 5. Check if anything was staged
 $status = git status --porcelain

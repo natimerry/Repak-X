@@ -1,5 +1,5 @@
 $rootPath = Resolve-Path "$PSScriptRoot/.."
-$submoduleFolder = "UassetToolRivals"
+$submoduleFolder = "UAssetToolRivals"
 $submodulePath = Join-Path $rootPath $submoduleFolder
 
 # Ensure we are in the root

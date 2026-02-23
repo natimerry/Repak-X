@@ -17,6 +17,7 @@ import {
   Cancel as CancelIcon,
   Search as SearchIcon
 } from '@mui/icons-material';
+import { VscFolder, VscFolderOpened, VscChevronRight, VscChevronDown } from 'react-icons/vsc';
 import Checkbox from './ui/Checkbox';
 import './SharingPanel.css';
 
@@ -50,15 +51,86 @@ type TransferProgress = {
   status: TransferStatus;
 };
 
+type FolderRecord = {
+  id: string;
+  name: string;
+  is_root?: boolean;
+};
+
+type TreeNode = {
+  id?: string;
+  name: string;
+  children: TreeNode[];
+  isVirtual: boolean;
+  fullPath?: string;
+};
+
 type SharingPanelProps = {
   onClose: () => void;
   gamePath?: string;
   installedMods: InstalledMod[];
   selectedMods?: Set<string>;
+  folders?: FolderRecord[];
 };
 
-export default function SharingPanel({ onClose, gamePath, installedMods, selectedMods }: SharingPanelProps) {
+const buildFolderTree = (folders: FolderRecord[]) => {
+  const root: any = { id: 'root', name: 'root', children: {}, isVirtual: true };
+  const sorted = [...folders].sort((a, b) => a.name.localeCompare(b.name));
+  sorted.forEach(folder => {
+    const parts = folder.id.split(/[/\\]/);
+    let current = root;
+    parts.forEach((part, i) => {
+      if (!current.children[part]) {
+        current.children[part] = { name: part, children: {}, isVirtual: true, fullPath: parts.slice(0, i + 1).join('/') };
+      }
+      current = current.children[part];
+      if (i === parts.length - 1) { current.id = folder.id; current.isVirtual = false; }
+    });
+  });
+  return root;
+};
+
+const convertToArray = (node: any): TreeNode[] => {
+  if (!node.children) return [];
+  const children = Object.values(node.children).map((c: any) => ({ ...c, children: convertToArray(c) }));
+  children.sort((a, b) => a.name.localeCompare(b.name));
+  return children;
+};
+
+const ReceiveFolderNode = ({ node, selectedId, onSelect, depth = 0 }: { node: TreeNode; selectedId: string | null; onSelect: (id: string | null) => void; depth?: number }) => {
+  const [isOpen, setIsOpen] = useState(true);
+  const hasChildren = node.children && node.children.length > 0;
+  const isSelected = selectedId === node.id;
+
+  return (
+    <div>
+      <div
+        className={`qo-folder-item ${isSelected ? 'selected' : ''} ${node.isVirtual ? 'virtual' : ''}`}
+        onClick={(e) => { e.stopPropagation(); node.isVirtual ? setIsOpen(!isOpen) : onSelect(node.id ?? null); }}
+        style={{ paddingLeft: `${depth * 16 + 8}px`, cursor: 'pointer' }}
+      >
+        <span className="folder-toggle" onClick={(e) => { e.stopPropagation(); setIsOpen(!isOpen); }}>
+          {hasChildren ? (isOpen ? <VscChevronDown /> : <VscChevronRight />) : <span style={{ width: 16 }} />}
+        </span>
+        <span className="folder-icon">
+          {isSelected || isOpen ? <VscFolderOpened /> : <VscFolder />}
+        </span>
+        <span className="folder-name">{node.name}</span>
+      </div>
+      {hasChildren && isOpen && (
+        <div>
+          {node.children.map(child => (
+            <ReceiveFolderNode key={child.fullPath || child.id} node={child} selectedId={selectedId} onSelect={onSelect} depth={depth + 1} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default function SharingPanel({ onClose, gamePath, installedMods, selectedMods, folders = [] }: SharingPanelProps) {
   const alert = useAlert();
+  const folderTreeNodes = convertToArray(buildFolderTree(folders));
   const [activeTab, setActiveTab] = useState('share'); // 'share' or 'receive'
   // const [error, setError] = useState(''); // Removed local error state in favor of toasts
 
@@ -81,6 +153,7 @@ export default function SharingPanel({ onClose, gamePath, installedMods, selecte
   const [receiveComplete, setReceiveComplete] = useState(false);
   const receiveHandledRef = useRef(false);
   const [isValidCode, setIsValidCode] = useState<boolean | null>(null); // null, true, false
+  const [receiveFolderId, setReceiveFolderId] = useState<string | null>(null);
 
   // Initialize selected mods from props
   useEffect(() => {
@@ -299,7 +372,14 @@ export default function SharingPanel({ onClose, gamePath, installedMods, selecte
         // Start receiving
         await invoke('p2p_start_receiving', {
           connectionString,
-          clientName: clientName
+          clientName: clientName,
+          folderId: receiveFolderId
+        });
+
+        console.debug('[SharingPanel] Starting receive', {
+          clientName,
+          folderId: receiveFolderId,
+          hasConnectionString: Boolean(connectionString)
         });
 
         setIsReceiving(true);
@@ -401,11 +481,11 @@ export default function SharingPanel({ onClose, gamePath, installedMods, selecte
                         </div>
                         <div className="mod-list-scroll">
                           {installedMods.filter((mod) => {
-                            const filename = mod.path.split('\\').pop();
+                            const filename = mod.path.split(/[/\\]/).pop();
                             const name = mod.custom_name || (filename || '').replace(/_\d+_P/g, '').replace(/\.pak$/i, '').replace(/\.bak_repak$/i, '');
                             return name.toLowerCase().includes(searchTerm.toLowerCase());
                           }).map((mod) => {
-                            const filename = mod.path.split('\\').pop();
+                            const filename = mod.path.split(/[/\\]/).pop();
                             const displayName = mod.custom_name || (filename || '').replace(/_\d+_P/g, '').replace(/\.pak$/i, '').replace(/\.bak_repak$/i, '');
                             return (
                               <div
@@ -551,6 +631,53 @@ export default function SharingPanel({ onClose, gamePath, installedMods, selecte
                     />
                   </div>
 
+                  <div className="form-group">
+                    <label>Save To</label>
+                    <div className="receive-folder-picker">
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => {
+                          console.debug('[SharingPanel] Reset receive folder to default game mods folder');
+                          setReceiveFolderId(null);
+                        }}
+                        title="Use game mods folder"
+                      >
+                        Use Game Mods Folder (Default)
+                      </button>
+
+                      {folderTreeNodes.length > 0 && (
+                        <div className="receive-folder-tree" role="tree" aria-label="Destination folders">
+                          {folderTreeNodes.map(node => (
+                            <ReceiveFolderNode
+                              key={node.fullPath || node.id || node.name}
+                              node={node}
+                              selectedId={receiveFolderId}
+                              onSelect={(id) => {
+                                console.debug('[SharingPanel] Selected receive folder', { folderId: id });
+                                setReceiveFolderId(id);
+                              }}
+                            />
+                          ))}
+                        </div>
+                      )}
+
+                      {folderTreeNodes.length === 0 && (
+                        <input
+                          type="text"
+                          value={gamePath || ''}
+                          readOnly
+                          placeholder="Game mods folder (default)"
+                          className="p2p-input"
+                          style={{ opacity: 0.6 }}
+                        />
+                      )}
+                    </div>
+                    <p style={{ fontSize: '0.8rem', opacity: 0.5, marginTop: '0.25rem' }}>
+                      {receiveFolderId ? `Selected destination: ${receiveFolderId}` : 'Defaults to your game mods folder'}
+                    </p>
+                  </div>
+
                   <div className="security-note">
                     <SecurityIcon fontSize="small" />
                     <p>Only connect to people you trust. All transfers are encrypted.</p>
@@ -597,7 +724,7 @@ export default function SharingPanel({ onClose, gamePath, installedMods, selecte
                         <div className="progress-container">
                           <div className="progress-info">
                             <span>{progress.status === 'Transferring' || progress.status === 'Verifying'
-                              ? (progress.current_file.split('\\').pop()?.split('/').pop() || progress.current_file)
+                              ? (progress.current_file.split(/[/\\]/).pop() || progress.current_file)
                               : ''}</span>
                             <span>{progress.total_files > 0 ? `${Math.round((progress.files_completed / progress.total_files) * 100)}%` : '—'}</span>
                           </div>

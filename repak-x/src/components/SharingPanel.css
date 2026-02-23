@@ -449,6 +449,57 @@
   min-width: 0;
 }
 
+.receive-folder-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.receive-folder-tree {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  padding: 0.35rem 0;
+}
+
+.qo-folder-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 30px;
+  color: var(--text-primary);
+  user-select: none;
+}
+
+.qo-folder-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.qo-folder-item.selected {
+  background: color-mix(in srgb, var(--accent-primary), transparent 88%);
+}
+
+.qo-folder-item.virtual {
+  color: var(--text-secondary);
+}
+
+.folder-toggle,
+.folder-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex-shrink: 0;
+}
+
+.folder-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .validation-icon {
   flex-shrink: 0;
   font-size: 1.2rem;

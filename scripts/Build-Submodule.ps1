@@ -4,7 +4,7 @@ $rootPath = Resolve-Path "$PSScriptRoot/.."
 Set-Location $rootPath
 
 # Paths
-$projectPath = Join-Path $rootPath "UassetToolRivals\src\UAssetTool\UAssetTool.csproj"
+$projectPath = Join-Path $rootPath "UAssetToolRivals\src\UAssetTool\UAssetTool.csproj"
 $targetSidecarPath = Join-Path $rootPath "target\uassettool\UAssetTool.exe"
 $targetDir = Split-Path $targetSidecarPath -Parent
 

@@ -160,7 +160,7 @@ jobs:
         shell: bash
         run: |
           echo "Building UAssetTool for ${{ matrix.dotnet_rid }}..."
-          dotnet publish UassetToolRivals/src/UAssetTool \
+          dotnet publish UAssetToolRivals/src/UAssetTool \
             -c Release \
             -r ${{ matrix.dotnet_rid }} \
             --self-contained true \
@@ -364,7 +364,7 @@ jobs:
           CHANGELOG=$(cat "$CHANGELOG_FILE" 2>/dev/null || echo "")
           
           # Build message - header first, then changelog
-          MESSAGE="<@&1472639362557542510> <:RepakXApp:1448417099318956133> **Repak X v${VERSION}** is now available for Windows and Linux!
+          MESSAGE="<@&1472639362557542510> <:RepakXApp:1448417099318956133> **Repak X v${VERSION}** is out!
           ${RELEASE_URL}
           
           ${CHANGELOG}"

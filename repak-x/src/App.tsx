@@ -22,6 +22,8 @@ import {
   ViewSidebar as ViewSidebarIcon,
   PlayArrow as PlayArrowIcon,
   Check as CheckIcon,
+  ToggleOn as ToggleOnIcon,
+  ToggleOff as ToggleOffIcon,
 } from '@mui/icons-material'
 import { RiDeleteBin2Fill } from 'react-icons/ri'
 import { MdDriveFileMoveOutline } from "react-icons/md"
@@ -193,6 +195,7 @@ type AppSettings = {
   enableDrp: boolean
   parallelProcessing: boolean
   autoCheckUpdates: boolean
+  holdToDelete: boolean
 }
 
 function App() {
@@ -320,6 +323,7 @@ function App() {
   const lastSelectedModIndex = useRef<number | null>(null) // For Shift+click range selection
   const filteredModsRef = useRef<ModRecord[]>([]) // Keep in sync with filteredMods for selection handler
   const clashScopeModPath = useRef<string | null>(null) // null = global clashes, path = single-mod scope
+  const safeRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const showPromiseTransitionLoader = (message: string) => {
     console.debug('[PromiseTransitionLoader] show', { message })
@@ -343,6 +347,36 @@ function App() {
       hidePromiseTransitionLoader()
     }
   }
+
+  const scheduleSafeModsRefresh = (reason: string, delayMs = 450) => {
+    if (safeRefreshTimerRef.current) {
+      clearTimeout(safeRefreshTimerRef.current)
+    }
+
+    safeRefreshTimerRef.current = setTimeout(async () => {
+      console.debug('[SafeModsRefresh] Running delayed refresh', { reason, delayMs })
+      try {
+        const refreshedMods = await loadMods()
+        console.debug('[SafeModsRefresh] Delayed refresh complete', {
+          reason,
+          refreshedModsCount: refreshedMods.length
+        })
+      } catch (error) {
+        console.error('[SafeModsRefresh] Delayed refresh failed', { reason, error })
+      } finally {
+        safeRefreshTimerRef.current = null
+      }
+    }, delayMs)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (safeRefreshTimerRef.current) {
+        clearTimeout(safeRefreshTimerRef.current)
+        safeRefreshTimerRef.current = null
+      }
+    }
+  }, [])
 
   // Bulk delete state
   const [isDeletingBulk, setIsDeletingBulk] = useState(false)
@@ -496,7 +530,7 @@ function App() {
     }
   }
 
-  const handleCheckForUpdates = async () => {
+  const handleCheckForUpdates = async (silent = false) => {
     setIsCheckingUpdates(true);
     try {
       const result = await invoke('check_for_updates') as any;
@@ -504,12 +538,14 @@ function App() {
         setUpdateInfo(result);
         setShowUpdateModal(true);
         console.debug('[Updates] Update available, opening UpdateAppModal', { latest: result.latest });
-      } else {
+      } else if (!silent) {
         alert.success('Up to Date', 'You are running the latest version.');
       }
     } catch (error) {
       console.error('Failed to check for updates:', error);
-      alert.error('Update Check Failed', String(error));
+      if (!silent) {
+        alert.error('Update Check Failed', String(error));
+      }
     } finally {
       setIsCheckingUpdates(false);
     }
@@ -552,7 +588,8 @@ function App() {
     if (!updateInfo?.asset_url || !updateInfo?.asset_name) {
       // No direct download available, open release page
       if (updateInfo?.url) {
-        await invoke('open_in_explorer', { path: updateInfo.url });
+        const { open: openUrl } = await import('@tauri-apps/plugin-shell');
+        await openUrl(updateInfo.url);
       }
       return;
     }
@@ -801,6 +838,120 @@ function App() {
     e.stopPropagation()
     setIsDeletingBulk(false)
     if (deleteBulkTimeoutRef.current) clearTimeout(deleteBulkTimeoutRef.current)
+  }
+
+  const handleBulkToggle = async (enable: boolean) => {
+    if (selectedMods.size === 0 || gameRunning) {
+      if (gameRunning) alert.warning('Game Running', 'Cannot toggle mods while game is running.')
+      return
+    }
+    const targetMods = mods.filter(m => selectedMods.has(m.path) && m.enabled !== enable)
+    if (targetMods.length === 0) return
+
+    try {
+      setStatus(`${enable ? 'Enabling' : 'Disabling'} ${targetMods.length} mods...`)
+      const oldPaths = new Set(selectedMods)
+      const normalizeToggleKey = (path: string) => path.replace(/\.(pak|bak_repak|pak_disabled)$/i, '')
+      let count = 0
+
+      console.debug('[BulkToggle] Starting', {
+        target: enable ? 'enable' : 'disable',
+        selectedCount: selectedMods.size,
+        targetCount: targetMods.length
+      })
+
+      for (const mod of targetMods) {
+        try {
+          await invoke('toggle_mod', { modPath: mod.path })
+          count++
+        } catch (e) {
+          console.error(`Failed to toggle ${mod.path}:`, e)
+        }
+      }
+
+      setStatus(`${enable ? 'Enabled' : 'Disabled'} ${count} mods.`)
+      const refreshedMods = await loadMods()
+
+      // Re-map selection to new paths (extension changes on toggle)
+      const refreshedByToggleKey = new Map<string, ModRecord>()
+      for (const mod of refreshedMods) {
+        refreshedByToggleKey.set(normalizeToggleKey(mod.path), mod)
+      }
+
+      const newSelected = new Set<string>()
+      for (const oldPath of oldPaths) {
+        const match = refreshedByToggleKey.get(normalizeToggleKey(oldPath))
+        if (match) newSelected.add(match.path)
+      }
+      setSelectedMods(newSelected)
+
+      console.debug('[BulkToggle] Remapped selection after reload', {
+        previousSelectedCount: oldPaths.size,
+        newSelectedCount: newSelected.size,
+        refreshedModsCount: refreshedMods.length
+      })
+
+      if (selectedMod) {
+        const updatedSelected = refreshedByToggleKey.get(normalizeToggleKey(selectedMod.path))
+        if (updatedSelected) {
+          setSelectedMod(updatedSelected)
+        }
+      }
+
+      scheduleSafeModsRefresh('bulk-toggle-post-reload')
+    } catch (e) {
+      console.error('Bulk toggle failed:', e)
+      setStatus('Bulk toggle failed: ' + e)
+    }
+  }
+
+  const handleExtractAssets = async (mod: ModRecord) => {
+    try {
+      const destFolder = await open({
+        directory: true,
+        multiple: false,
+        title: 'Select destination folder for extracted assets'
+      })
+      if (!destFolder) return
+
+      let modPath = mod.path
+      if (mod.is_iostore && mod.utoc_path) {
+        modPath = mod.utoc_path
+      }
+
+      setStatus('Extracting assets...')
+      setModLoadingProgress(-1)
+      setIsModsLoading(true)
+
+      const unlistenProgress = await listen('extraction_progress', (event: any) => {
+        const p = event.payload
+        if (p.status === 'extracting') {
+          setStatus(`Extracting assets — ${p.current_file}`)
+        }
+      })
+
+      try {
+        const fileCount = await invoke('extract_mod_assets', {
+          modPath,
+          destPath: destFolder
+        })
+        alert.success('Extraction Complete', `Extracted ${fileCount} assets.`)
+        setStatus(`Extracted ${fileCount} assets`)
+
+        const modName = (modPath.split(/[/\\]/).pop() || '').replace(/\.[^.]+$/, '')
+        await invoke('open_in_explorer', { path: `${destFolder}\\${modName}` })
+      } finally {
+        unlistenProgress()
+        setIsModsLoading(false)
+        setModLoadingProgress(0)
+      }
+    } catch (e) {
+      console.error('Failed to extract assets:', e)
+      alert.error('Extraction Failed', String(e))
+      setStatus('Extraction failed')
+      setIsModsLoading(false)
+      setModLoadingProgress(0)
+    }
   }
 
   // Update Mod Handlers
@@ -1249,7 +1400,7 @@ function App() {
     }
   }
 
-  const loadMods = async () => {
+  const loadMods = async (): Promise<ModRecord[]> => {
     try {
       console.log('Loading mods...')
       setIsModsLoading(true)
@@ -1265,9 +1416,11 @@ function App() {
       await preloadModDetails(modList)
 
       setStatus(`Loaded ${modList.length} mod(s)`)
+      return modList as ModRecord[]
     } catch (error) {
       console.error('Error loading mods:', error)
       setStatus('Error loading mods: ' + error)
+      return []
     } finally {
       setIsModsLoading(false)
       setModLoadingProgress(0)
@@ -1534,22 +1687,20 @@ function App() {
       // The path changes from .pak to .bak_repak or vice versa
       const baseName = modPath.replace(/\.(pak|bak_repak)$/i, '')
 
-      await loadMods()
+      const refreshedMods = await loadMods()
 
       // Update selectedMod if the toggled mod was selected
       // Find the mod by matching the base path (without extension)
       if (selectedMod && selectedMod.path === modPath) {
-        // After loadMods, mods state is updated - find the matching mod
-        setMods(prevMods => {
-          const updatedMod = prevMods.find(m =>
-            m.path.replace(/\.(pak|bak_repak)$/i, '') === baseName
-          )
-          if (updatedMod) {
-            setSelectedMod(updatedMod)
-          }
-          return prevMods
-        })
+        const updatedMod = refreshedMods.find(m =>
+          m.path.replace(/\.(pak|bak_repak)$/i, '') === baseName
+        )
+        if (updatedMod) {
+          setSelectedMod(updatedMod)
+        }
       }
+
+      scheduleSafeModsRefresh('single-toggle-post-reload')
     } catch (error) {
       setStatus('Error toggling mod: ' + error)
     }
@@ -1686,7 +1837,7 @@ function App() {
     const clickedIndex = currentList.findIndex(m => m.path === mod.path)
 
     // Shift+Ctrl+click: deselect range from last selected index to clicked index
-    if (e?.shiftKey && (e?.ctrlKey || e?.metaKey) && lastSelectedModIndex.current !== null && clickedIndex !== -1) {
+    if (e?.shiftKey && e?.ctrlKey && lastSelectedModIndex.current !== null && clickedIndex !== -1) {
       const start = Math.min(lastSelectedModIndex.current, clickedIndex)
       const end = Math.max(lastSelectedModIndex.current, clickedIndex)
       const newSelected = new Set(selectedMods)
@@ -2038,7 +2189,7 @@ function App() {
   // Compute base filtered mods (excluding folder filter)
   const baseFilteredMods = mods.filter(mod => {
     // Hide LODs_Disabler mods from the list - they are controlled via Tools panel
-    const modName = mod.mod_name || mod.custom_name || mod.path.split('\\').pop() || ''
+    const modName = mod.mod_name || mod.custom_name || mod.path.split(/[/\\]/).pop() || ''
     if (modName.toLowerCase().includes('lods_disabler') || mod.path.toLowerCase().includes('lods_disabler')) {
       return false
     }
@@ -2046,7 +2197,7 @@ function App() {
     // Search query
     if (searchQuery) {
       const query = searchQuery.toLowerCase()
-      const displayName = (mod.custom_name || mod.path.split('\\').pop() || '').toLowerCase()
+      const displayName = (mod.custom_name || mod.path.split(/[/\\]/).pop() || '').toLowerCase()
       if (!displayName.includes(query)) return false
     }
 
@@ -2110,7 +2261,7 @@ function App() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase()
-      const ctrl = e.ctrlKey || e.metaKey
+      const ctrl = e.ctrlKey
       const shift = e.shiftKey
 
       // Skip if typing in an input field (except Escape and Ctrl+F)
@@ -2124,11 +2275,10 @@ function App() {
         e.preventDefault()
         return
       }
-      // Ctrl+R - Full app reload (reset all states)
+      // Ctrl+R - Full React reinit
       else if (ctrl && key === 'r' && !shift) {
         e.preventDefault()
-        alert.info('App Reloaded', 'Refreshed all data and resetted states.')
-        loadInitialData()
+        window.location.reload()
       }
       // Ctrl+F - Focus search
       else if (ctrl && key === 'f') {
@@ -2476,7 +2626,7 @@ function App() {
 
     if (savedAutoCheckUpdates) {
       console.debug('[Updates] Running startup auto-check for updates');
-      void handleCheckForUpdates();
+      void handleCheckForUpdates(true);
     } else {
       console.debug('[Updates] Skipping startup auto-check (disabled in settings)');
     }
@@ -2729,7 +2879,7 @@ function App() {
         downloadedPath={downloadedUpdatePath}
         onDownload={handleDownloadUpdate}
         onApply={handleApplyUpdate}
-        onOpenReleasePage={(url: string) => invoke('open_in_explorer', { path: url })}
+        onOpenReleasePage={(url: string) => { import('@tauri-apps/plugin-shell').then(m => m.open(url)); }}
         onClose={handleCancelUpdate}
       />
 
@@ -3113,6 +3263,38 @@ function App() {
                     />
                   </div>
 
+                  {(() => {
+                    const selMods = mods.filter(m => selectedMods.has(m.path))
+                    const enabledCount = selMods.filter(m => m.enabled).length
+                    const disabledCount = selMods.length - enabledCount
+                    const allEnabled = disabledCount === 0
+                    const allDisabled = enabledCount === 0
+                    return (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <button
+                          onClick={() => handleBulkToggle(true)}
+                          className="btn-ghost"
+                          style={{ height: '40px', opacity: allEnabled ? 0.4 : 1 }}
+                          disabled={selectedMods.size === 0 || allEnabled}
+                          title={allEnabled ? 'All selected mods are already enabled' : `Enable ${disabledCount} disabled mod${disabledCount !== 1 ? 's' : ''}`}
+                        >
+                          <ToggleOnIcon fontSize="small" style={{ color: accentColor }} />
+                          {disabledCount > 0 ? `Enable (${disabledCount})` : 'Enable'}
+                        </button>
+                        <button
+                          onClick={() => handleBulkToggle(false)}
+                          className="btn-ghost"
+                          style={{ height: '40px', opacity: allDisabled ? 0.4 : 1 }}
+                          disabled={selectedMods.size === 0 || allDisabled}
+                          title={allDisabled ? 'All selected mods are already disabled' : `Disable ${enabledCount} enabled mod${enabledCount !== 1 ? 's' : ''}`}
+                        >
+                          <ToggleOffIcon fontSize="small" style={{ opacity: 0.7 }} />
+                          {enabledCount > 0 ? `Disable (${enabledCount})` : 'Disable'}
+                        </button>
+                      </div>
+                    )
+                  })()}
+
                   <div
                     className={`btn-ghost danger ${isDeletingBulk ? 'holding' : ''}`}
                     onMouseDown={handleBulkDeleteDown}
@@ -3257,6 +3439,7 @@ function App() {
             }}
             onCheckConflicts={() => contextMenu.mod && handleCheckSingleModClashes(contextMenu.mod)}
             onUpdateMod={() => contextMenu.mod && handleInitiateUpdate(contextMenu.mod)}
+            onExtractAssets={handleExtractAssets}
             allTags={allTags}
             gamePath={gamePath}
             holdToDelete={holdToDelete}

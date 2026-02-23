@@ -10,9 +10,8 @@ repak-x/target/
 repak-x/dist/
 
 # IDE/Editor folders
-repak-x/.agent/
-repak-x/.agents/
-repak-x/.windsurf/
+.windsurf/
+.vscode/
 
 # Documentation (root-level only)
 /docs/

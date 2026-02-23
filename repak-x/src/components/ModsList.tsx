@@ -176,7 +176,7 @@ const ModItem = memo(function ModItem({
     const [renameValue, setRenameValue] = useState('')
     const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const renameInputRef = useRef<HTMLInputElement | null>(null)
-    const rawName = mod.custom_name || mod.path.split('\\').pop() || mod.path
+    const rawName = mod.custom_name || mod.path.split(/[/\\]/).pop() || mod.path
     const nameWithoutExt = rawName.replace(/\.[^/.]+$/, '')
 
     // Identify all trailing priority suffixes (e.g. _9999999_P_9999999_P)

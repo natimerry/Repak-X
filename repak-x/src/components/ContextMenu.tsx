@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { open } from '@tauri-apps/plugin-dialog'
 import { IoMdWarning } from "react-icons/io"
 import './ContextMenu.css'
 
@@ -34,12 +33,13 @@ type ContextMenuProps = {
   onRenameFolder: () => void
   onCheckConflicts?: () => void
   onUpdateMod?: () => void
+  onExtractAssets?: (mod: ModRecord) => void
   allTags: string[]
   gamePath?: string
   holdToDelete?: boolean
 }
 
-const ContextMenu = ({ x, y, mod, folder, onClose, onAssignTag, onNewTag, onMoveTo, onCreateFolder, folders, onDelete, onToggle, onRename, onRenameFolder, onCheckConflicts, onUpdateMod, allTags, gamePath, holdToDelete = true }: ContextMenuProps) => {
+const ContextMenu = ({ x, y, mod, folder, onClose, onAssignTag, onNewTag, onMoveTo, onCreateFolder, folders, onDelete, onToggle, onRename, onRenameFolder, onCheckConflicts, onUpdateMod, onExtractAssets, allTags, gamePath, holdToDelete = true }: ContextMenuProps) => {
   const [isDeleting, setIsDeleting] = useState(false)
   const deleteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
@@ -179,7 +179,7 @@ const ContextMenu = ({ x, y, mod, folder, onClose, onAssignTag, onNewTag, onMove
 
   return (
     <div ref={menuRef} className="context-menu" style={{ top: adjustedPos.y, left: adjustedPos.x }} onClick={(e) => e.stopPropagation()}>
-      <div className="context-menu-header">{mod.custom_name || mod.path.split('\\').pop()}</div>
+      <div className="context-menu-header">{mod.custom_name || mod.path.split(/[/\\]/).pop()}</div>
 
       <div className="context-menu-item submenu-trigger">
         Assign Tag...
@@ -254,38 +254,8 @@ const ContextMenu = ({ x, y, mod, folder, onClose, onAssignTag, onNewTag, onMove
 
       <div className="context-menu-separator" />
 
-      <div className="context-menu-item" onClick={async () => {
-        try {
-          // Open folder picker dialog
-          const destFolder = await open({
-            directory: true,
-            multiple: false,
-            title: 'Select destination folder for extracted assets'
-          });
-
-          if (destFolder) {
-            // Get the mod path - handle both PAK and IoStore
-            let modPath = mod.path;
-
-            // If this is an IoStore mod (folder with .utoc), find the .utoc file
-            if (mod.is_iostore && mod.utoc_path) {
-              modPath = mod.utoc_path;
-            }
-
-            const fileCount = await invoke('extract_mod_assets', {
-              modPath: modPath,
-              destPath: destFolder
-            });
-
-            console.log(`Extracted ${fileCount} files to ${destFolder}`);
-
-            // Open the extracted folder in explorer
-            const modName = (modPath.split(/[/\\]/).pop() || '').replace(/\.[^.]+$/, '');
-            await invoke('open_in_explorer', { path: `${destFolder}\\${modName}` });
-          }
-        } catch (e) {
-          console.error('Failed to extract assets:', e);
-        }
+      <div className="context-menu-item" onClick={() => {
+        if (onExtractAssets) onExtractAssets(mod);
         onClose();
       }}>
         Extract Assets

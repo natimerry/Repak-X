@@ -138,7 +138,7 @@ export default function ModDetailsPanel({ mod, initialDetails, onClose, characte
 
   if (!mod) return null
 
-  const rawName = mod.custom_name || mod.path.split('\\').pop() || mod.path
+  const rawName = mod.custom_name || mod.path.split(/[/\\]/).pop() || mod.path
   const nameWithoutExt = rawName.replace(/\.[^/.]+$/, '')
   const suffixMatch = nameWithoutExt.match(/(_\d+_P)$/i)
   const cleanName = suffixMatch ? nameWithoutExt.slice(0, -suffixMatch[0].length) : nameWithoutExt
