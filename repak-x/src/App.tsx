@@ -2762,6 +2762,7 @@ function App() {
           gamePath={gamePath}
           installedMods={mods}
           selectedMods={selectedMods}
+          folders={folders}
         />
       )}
 

@@ -37,7 +37,7 @@ fn linux_build() {
     let primary_src = target_dir.join("uassettool").join("UAssetTool");
     
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
-    let tools_dir = workspace_root.join("UassetToolRivals").join("src").join("UAssetTool");
+    let tools_dir = workspace_root.join("UAssetToolRivals").join("src").join("UAssetTool");
     let fallback_release_publish = tools_dir.join("bin").join("Release").join("net8.0").join("linux-x64").join("publish").join("UAssetTool");
     let fallback_release = tools_dir.join("bin").join("Release").join("net8.0").join("linux-x64").join("UAssetTool");
     let fallback_debug = tools_dir.join("bin").join("Debug").join("net8.0").join("linux-x64").join("UAssetTool");
@@ -105,7 +105,7 @@ fn linux_build() {
             }
         }
     } else {
-        println!("cargo:warning=UAssetTool not found. To enable asset pipeline, build it via: 'dotnet publish UassetToolRivals/src/UAssetTool -c Release -r linux-x64 --self-contained true'");
+        println!("cargo:warning=UAssetTool not found. To enable asset pipeline, build it via: 'dotnet publish UAssetToolRivals/src/UAssetTool -c Release -r linux-x64 --self-contained true'");
     }
     
     // 2) Copy character_data.json to data folder
@@ -193,7 +193,7 @@ fn windows_build() {
     let primary_src = target_dir.join("uassettool").join("UAssetTool.exe");
 
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
-    let tools_dir = workspace_root.join("UassetToolRivals").join("src").join("UAssetTool");
+    let tools_dir = workspace_root.join("UAssetToolRivals").join("src").join("UAssetTool");
     let fallback_release_publish = tools_dir.join("bin").join("Release").join("net8.0").join("win-x64").join("publish").join("UAssetTool.exe");
     let fallback_release = tools_dir.join("bin").join("Release").join("net8.0").join("win-x64").join("UAssetTool.exe");
     let fallback_debug = tools_dir.join("bin").join("Debug").join("net8.0").join("win-x64").join("UAssetTool.exe");
@@ -259,7 +259,7 @@ fn windows_build() {
             }
         }
     } else {
-        println!("cargo:warning=UAssetTool.exe not found. To enable asset pipeline, build it via: 'dotnet publish UassetToolRivals/src/UAssetTool -c Release -r win-x64 --self-contained true'");
+        println!("cargo:warning=UAssetTool.exe not found. To enable asset pipeline, build it via: 'dotnet publish UAssetToolRivals/src/UAssetTool -c Release -r win-x64 --self-contained true'");
     }
 
     // Oodle DLL is downloaded on-demand by oodle_loader

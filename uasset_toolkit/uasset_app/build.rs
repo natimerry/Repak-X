@@ -57,9 +57,9 @@ fn main() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = manifest_dir.parent().unwrap().parent().unwrap();
 
-    // Use UAssetTool from UassetToolRivals submodule
+    // Use UAssetTool from UAssetToolRivals submodule
     let tool_project_dir = workspace_root
-        .join("UassetToolRivals")
+        .join("UAssetToolRivals")
         .join("src")
         .join("UAssetTool");
 
@@ -75,7 +75,7 @@ fn main() {
 
     // Watch UAssetAPI source directory for changes (now in submodule)
     let uasset_api_dir = workspace_root
-        .join("UassetToolRivals")
+        .join("UAssetToolRivals")
         .join("src")
         .join("UAssetAPI");
     if uasset_api_dir.exists() {
@@ -203,7 +203,7 @@ fn main() {
         }
 
         if !copied {
-            let build_cmd = format!("dotnet publish UassetToolRivals/src/UAssetTool -c Release -r {} --self-contained true", runtime_id);
+            let build_cmd = format!("dotnet publish UAssetToolRivals/src/UAssetTool -c Release -r {} --self-contained true", runtime_id);
             panic!("UAssetTool is required but was not produced. Ensure .NET SDK is installed or precompile via: '{}'", build_cmd);
         }
     }

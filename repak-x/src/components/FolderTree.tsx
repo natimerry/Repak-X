@@ -39,6 +39,7 @@ type FolderTreeProps = {
     getCount: (folderId: string) => number;
     hasFilters: boolean;
     onContextMenu?: (e: React.MouseEvent, folder: FolderRecord) => void;
+    hideAllMods?: boolean;
 };
 
 const buildTree = (folders: FolderRecord[]): TreeNodeMap => {
@@ -198,7 +199,7 @@ const FolderNode = ({ node, selectedFolderId, onSelect, onDelete, getCount, hasF
     );
 };
 
-const FolderTree = ({ folders, selectedFolderId, onSelect, onDelete, getCount, hasFilters, onContextMenu }: FolderTreeProps) => {
+const FolderTree = ({ folders, selectedFolderId, onSelect, onDelete, getCount, hasFilters, onContextMenu, hideAllMods = false }: FolderTreeProps) => {
     // Separate root folder from subfolders
     const rootFolder = useMemo(() => folders.find((f: FolderRecord) => f.is_root), [folders]);
     const subfolders = useMemo(() => folders.filter((f: FolderRecord) => !f.is_root), [folders]);
@@ -219,20 +220,22 @@ const FolderTree = ({ folders, selectedFolderId, onSelect, onDelete, getCount, h
     return (
         <div className="folder-tree" style={{ padding: 0 }}>
             {/* All Mods Root Node */}
-            <div className="folder-tree-node">
-                <div
-                    className={`node-content all-mods ${selectedFolderId === 'all' ? 'selected' : ''}`}
-                    onClick={() => onSelect('all')}
-                >
-                    <span className="node-icon folder-icon">
-                        <VscLibrary />
-                    </span>
-                    <span className="node-label">All Mods</span>
-                    <span className="folder-count">
-                        {getCount('all')}
-                    </span>
+            {!hideAllMods && (
+                <div className="folder-tree-node">
+                    <div
+                        className={`node-content all-mods ${selectedFolderId === 'all' ? 'selected' : ''}`}
+                        onClick={() => onSelect('all')}
+                    >
+                        <span className="node-icon folder-icon">
+                            <VscLibrary />
+                        </span>
+                        <span className="node-label">All Mods</span>
+                        <span className="folder-count">
+                            {getCount('all')}
+                        </span>
+                    </div>
                 </div>
-            </div>
+            )}
 
             {/* Root Folder (~mods) - Display separately */}
             {rootFolder && (
