@@ -4,8 +4,8 @@
 
 ### 🔧 Backend / Logic
 - Improved Static Mesh serialization
-- Fixed occurence of skipping assets in conversion
-- Update system is now more reliable
+- Fixed occurence of skipping assets during conversion
+- Update App system is now more reliable
 
 ### 🎨 Frontend / UI
 - Removed USMAP setting (no longer needed)
