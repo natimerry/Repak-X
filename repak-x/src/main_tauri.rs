@@ -6273,7 +6273,11 @@ fn main() {
     let discord_state = DiscordState {
         manager: discord_manager,
     };
-
+    #[cfg(target_os = "linux")]
+    {
+        // Tauri and NVIDIA don't mix, due to Webkit compositing and DMABUF renderer issues so this env fixes that
+        std::env::set_var("__NV_DISABLE_EXPLICIT_SYNC", "1");
+    }
     tauri::Builder::default()
         .manage(state)
         .manage(watcher_state)
