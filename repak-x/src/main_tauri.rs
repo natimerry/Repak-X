@@ -4175,16 +4175,18 @@ async fn check_for_updates(window: Window) -> Result<Option<UpdateInfo>, String>
              let mut asset_url = None;
              let mut asset_name = None;
              
-             // Find the appropriate asset for the current platform
+             // Find the appropriate asset for the current platform using RUNTIME detection
              if let Some(assets) = assets {
-                 #[cfg(target_os = "windows")]
-                 let platform_pattern = "Windows";
-                 #[cfg(target_os = "linux")]
-                 let platform_pattern = "Linux";
-                 #[cfg(target_os = "macos")]
-                 let platform_pattern = "macOS";
-                 #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-                 let platform_pattern = "";
+                 // Runtime OS detection - works correctly even when cross-compiled
+                 let platform_pattern = if cfg!(target_os = "windows") {
+                     "Windows"
+                 } else if cfg!(target_os = "linux") {
+                     "Linux"
+                 } else if cfg!(target_os = "macos") {
+                     "macOS"
+                 } else {
+                     ""
+                 };
                  
                  // First, try to find a platform-specific asset
                  if let Some(asset) = assets.iter().find(|a| {
@@ -4196,10 +4198,9 @@ async fn check_for_updates(window: Window) -> Result<Option<UpdateInfo>, String>
                      asset_name = asset["name"].as_str().map(|s| s.to_string());
                  }
                  
-                 // Fallback: if no platform-specific asset found, try generic patterns
+                 // Fallback: if no platform-specific asset found, try generic patterns based on OS
                  if asset_url.is_none() {
-                     #[cfg(target_os = "windows")]
-                     {
+                     if cfg!(target_os = "windows") {
                          if let Some(asset) = assets.iter().find(|a| {
                              let name = a["name"].as_str().unwrap_or("");
                              name.ends_with(".zip") || name.ends_with(".exe") || name.ends_with(".msi")
@@ -4207,12 +4208,18 @@ async fn check_for_updates(window: Window) -> Result<Option<UpdateInfo>, String>
                              asset_url = asset["browser_download_url"].as_str().map(|s| s.to_string());
                              asset_name = asset["name"].as_str().map(|s| s.to_string());
                          }
-                     }
-                     #[cfg(target_os = "linux")]
-                     {
+                     } else if cfg!(target_os = "linux") {
                          if let Some(asset) = assets.iter().find(|a| {
                              let name = a["name"].as_str().unwrap_or("");
                              name.ends_with(".tar.gz") || name.ends_with(".AppImage") || name.ends_with(".deb")
+                         }) {
+                             asset_url = asset["browser_download_url"].as_str().map(|s| s.to_string());
+                             asset_name = asset["name"].as_str().map(|s| s.to_string());
+                         }
+                     } else if cfg!(target_os = "macos") {
+                         if let Some(asset) = assets.iter().find(|a| {
+                             let name = a["name"].as_str().unwrap_or("");
+                             name.ends_with(".zip") || name.ends_with(".dmg")
                          }) {
                              asset_url = asset["browser_download_url"].as_str().map(|s| s.to_string());
                              asset_name = asset["name"].as_str().map(|s| s.to_string());
@@ -4421,20 +4428,22 @@ async fn apply_update(
     let app_dir = exe_path.parent()
         .ok_or("Failed to get app directory")?;
     
-    // Get the exe filename for tasklist matching
+    // Get the exe filename for process matching
     let exe_name = exe_path.file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or("RepakX.exe");
+        .unwrap_or(if cfg!(target_os = "windows") { "RepakX.exe" } else { "REPAK-X" });
     
-    // Determine if this is a ZIP file that needs extraction
+    // Determine archive type
     let is_zip = downloaded_path.to_lowercase().ends_with(".zip");
+    let is_tar_gz = downloaded_path.to_lowercase().ends_with(".tar.gz");
     
-    // Create the updater script
-    let updater_script_path = std::env::temp_dir().join("repakx_updater.bat");
-    
-    let script_content = if is_zip {
-        // For ZIP files: extract and replace (portable app update)
-        format!(r#"@echo off
+    // Use runtime OS detection to create the appropriate updater script
+    if cfg!(target_os = "windows") {
+        // Windows: Create .bat script
+        let updater_script_path = std::env::temp_dir().join("repakx_updater.bat");
+        
+        let script_content = if is_zip {
+            format!(r#"@echo off
 title RepakX Updater
 echo ============================================
 echo RepakX Portable Update
@@ -4522,15 +4531,14 @@ start "" "{exe_path}"
 :: Self-delete and exit cleanly
 (goto) 2>nul & del "%~f0" & exit
 "#,
-            exe_name = exe_name,
-            temp_dir = download_path.parent().unwrap_or(&std::env::temp_dir()).to_string_lossy().replace('/', "\\"),
-            zip_path = download_path.to_string_lossy().replace('/', "\\"),
-            app_dir = app_dir.to_string_lossy().replace('/', "\\"),
-            exe_path = exe_path.to_string_lossy().replace('/', "\\"),
-        )
-    } else {
-        // For EXE files: just run the installer (not typical for portable apps)
-        format!(r#"@echo off
+                exe_name = exe_name,
+                temp_dir = download_path.parent().unwrap_or(&std::env::temp_dir()).to_string_lossy().replace('/', "\\"),
+                zip_path = download_path.to_string_lossy().replace('/', "\\"),
+                app_dir = app_dir.to_string_lossy().replace('/', "\\"),
+                exe_path = exe_path.to_string_lossy().replace('/', "\\"),
+            )
+        } else {
+            format!(r#"@echo off
 title RepakX Updater
 echo Waiting for RepakX to close...
 timeout /t 2 /nobreak >nul
@@ -4551,36 +4559,99 @@ del "{installer_path}"
 :: Self-delete and exit cleanly
 (goto) 2>nul & del "%~f0" & exit
 "#,
-            exe_name = exe_name,
-            installer_path = download_path.to_string_lossy().replace('/', "\\"),
-        )
-    };
-    
-    std::fs::write(&updater_script_path, script_content)
-        .map_err(|e| format!("Failed to write updater script: {}", e))?;
-    
-    info!("Created updater script at: {:?}", updater_script_path);
-    
-    // Launch the updater script (it will wait for the app to close)
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
+                exe_name = exe_name,
+                installer_path = download_path.to_string_lossy().replace('/', "\\"),
+            )
+        };
         
-        // Use start with /MIN to show the window minimized but visible
-        // so user can see progress if needed
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "/MIN", "RepakX Updater", &updater_script_path.to_string_lossy()])
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
-            .map_err(|e| format!("Failed to launch updater: {}", e))?;
-    }
-    
-    #[cfg(target_os = "linux")]
-    {
-        // On Linux, create and run a shell script for updating
+        std::fs::write(&updater_script_path, &script_content)
+            .map_err(|e| format!("Failed to write updater script: {}", e))?;
+        
+        info!("Created Windows updater script at: {:?}", updater_script_path);
+        
+        // Launch the updater script
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            
+            std::process::Command::new("cmd")
+                .args(["/C", "start", "/MIN", "RepakX Updater", &updater_script_path.to_string_lossy()])
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()
+                .map_err(|e| format!("Failed to launch updater: {}", e))?;
+        }
+    } else if cfg!(target_os = "linux") {
+        // Linux: Create .sh script
         let linux_script_path = std::env::temp_dir().join("repakx_updater.sh");
-        let linux_script = if is_zip {
+        
+        let linux_script = if is_tar_gz {
+            format!(r#"#!/bin/bash
+echo "============================================"
+echo "RepakX Portable Update"
+echo "============================================"
+echo ""
+echo "Waiting for RepakX to close..."
+sleep 2
+
+# Wait for process to exit
+while pgrep -f "{exe_name}" > /dev/null; do
+    echo "Still running, waiting..."
+    sleep 1
+done
+
+echo "RepakX closed. Starting update..."
+echo ""
+
+# Extract update
+TEMP_DIR="{temp_dir}"
+ARCHIVE_PATH="{archive_path}"
+APP_DIR="{app_dir}"
+
+echo "Extracting update archive..."
+mkdir -p "$TEMP_DIR/extracted"
+tar -xzf "$ARCHIVE_PATH" -C "$TEMP_DIR/extracted"
+
+# Check for nested folder
+EXTRACTED_DIR="$TEMP_DIR/extracted"
+SUBDIR_COUNT=$(find "$EXTRACTED_DIR" -maxdepth 1 -type d | wc -l)
+if [ "$SUBDIR_COUNT" -eq 2 ]; then
+    SUBDIR=$(find "$EXTRACTED_DIR" -maxdepth 1 -type d ! -path "$EXTRACTED_DIR" | head -1)
+    if [ -f "$SUBDIR/REPAK-X" ] || [ -f "$SUBDIR/repak-x" ]; then
+        EXTRACTED_DIR="$SUBDIR"
+    fi
+fi
+
+echo "Source: $EXTRACTED_DIR"
+echo "Destination: $APP_DIR"
+echo ""
+
+echo "Copying new files..."
+cp -rf "$EXTRACTED_DIR"/* "$APP_DIR/"
+chmod +x "$APP_DIR/REPAK-X" 2>/dev/null || chmod +x "$APP_DIR/repak-x" 2>/dev/null || true
+
+echo "Cleaning up..."
+rm -rf "$TEMP_DIR"
+
+echo ""
+echo "============================================"
+echo "Update complete!"
+echo "============================================"
+echo ""
+echo "Launching RepakX..."
+sleep 2
+"{exe_path}" &
+
+# Delete this script
+rm -f "$0"
+"#,
+                exe_name = exe_name,
+                temp_dir = download_path.parent().unwrap_or(&std::env::temp_dir()).to_string_lossy(),
+                archive_path = download_path.to_string_lossy(),
+                app_dir = app_dir.to_string_lossy(),
+                exe_path = exe_path.to_string_lossy(),
+            )
+        } else if is_zip {
             format!(r#"#!/bin/bash
 echo "============================================"
 echo "RepakX Portable Update"
@@ -4611,7 +4682,7 @@ unzip -o "$ZIP_PATH" -d "$TEMP_DIR/extracted"
 EXTRACTED_DIR="$TEMP_DIR/extracted"
 SUBDIR_COUNT=$(find "$EXTRACTED_DIR" -maxdepth 1 -type d | wc -l)
 if [ "$SUBDIR_COUNT" -eq 2 ]; then
-    SUBDIR=$(find "$EXTRACTED_DIR" -maxdepth 1 -type d ! -path "$EXTRACTED_DIR")
+    SUBDIR=$(find "$EXTRACTED_DIR" -maxdepth 1 -type d ! -path "$EXTRACTED_DIR" | head -1)
     if [ -f "$SUBDIR/REPAK-X" ] || [ -f "$SUBDIR/repak-x" ]; then
         EXTRACTED_DIR="$SUBDIR"
     fi
@@ -4623,7 +4694,7 @@ echo ""
 
 echo "Copying new files..."
 cp -rf "$EXTRACTED_DIR"/* "$APP_DIR/"
-chmod +x "$APP_DIR/REPAK-X" 2>/dev/null || true
+chmod +x "$APP_DIR/REPAK-X" 2>/dev/null || chmod +x "$APP_DIR/repak-x" 2>/dev/null || true
 
 echo "Cleaning up..."
 rm -rf "$TEMP_DIR"
@@ -4647,7 +4718,7 @@ rm -f "$0"
                 exe_path = exe_path.to_string_lossy(),
             )
         } else {
-            // For non-zip files on Linux (AppImage, etc.)
+            // For AppImage or other executables
             format!(r#"#!/bin/bash
 echo "Waiting for RepakX to close..."
 sleep 2
@@ -4668,10 +4739,12 @@ rm -f "$0"
             )
         };
         
-        std::fs::write(&linux_script_path, linux_script)
+        std::fs::write(&linux_script_path, &linux_script)
             .map_err(|e| format!("Failed to write Linux updater script: {}", e))?;
         
-        // Make script executable
+        info!("Created Linux updater script at: {:?}", linux_script_path);
+        
+        // Make script executable and launch it
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -4681,17 +4754,19 @@ rm -f "$0"
             perms.set_mode(0o755);
             std::fs::set_permissions(&linux_script_path, perms)
                 .map_err(|e| format!("Failed to set script permissions: {}", e))?;
+            
+            std::process::Command::new("bash")
+                .arg(&linux_script_path)
+                .spawn()
+                .map_err(|e| format!("Failed to launch updater: {}", e))?;
         }
         
-        std::process::Command::new("bash")
-            .arg(&linux_script_path)
-            .spawn()
-            .map_err(|e| format!("Failed to launch updater: {}", e))?;
-    }
-    
-    #[cfg(target_os = "macos")]
-    {
-        // macOS updater - similar to Linux
+        #[cfg(not(unix))]
+        {
+            return Err("Linux update not supported on this build".to_string());
+        }
+    } else if cfg!(target_os = "macos") {
+        // macOS: Create .sh script
         let macos_script_path = std::env::temp_dir().join("repakx_updater.sh");
         let macos_script = format!(r#"#!/bin/bash
 echo "Waiting for RepakX to close..."
@@ -4715,8 +4790,10 @@ rm -f "$0"
             exe_path = exe_path.to_string_lossy(),
         );
         
-        std::fs::write(&macos_script_path, macos_script)
+        std::fs::write(&macos_script_path, &macos_script)
             .map_err(|e| format!("Failed to write macOS updater script: {}", e))?;
+        
+        info!("Created macOS updater script at: {:?}", macos_script_path);
         
         #[cfg(unix)]
         {
@@ -4727,12 +4804,19 @@ rm -f "$0"
             perms.set_mode(0o755);
             std::fs::set_permissions(&macos_script_path, perms)
                 .map_err(|e| format!("Failed to set script permissions: {}", e))?;
+            
+            std::process::Command::new("bash")
+                .arg(&macos_script_path)
+                .spawn()
+                .map_err(|e| format!("Failed to launch updater: {}", e))?;
         }
         
-        std::process::Command::new("bash")
-            .arg(&macos_script_path)
-            .spawn()
-            .map_err(|e| format!("Failed to launch updater: {}", e))?;
+        #[cfg(not(unix))]
+        {
+            return Err("macOS update not supported on this build".to_string());
+        }
+    } else {
+        return Err("Unsupported operating system for auto-update".to_string());
     }
     
     info!("Updater script launched, app will update on close");
