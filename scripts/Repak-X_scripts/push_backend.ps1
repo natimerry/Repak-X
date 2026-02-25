@@ -15,29 +15,44 @@ Set-Location $repoRoot
 # Check for [run-ci] release
 $versionResult = Invoke-VersionBump -RepoRoot $repoRoot
 
-# 1. Add Rust Source Files (Recursive)
-Write-Host "Staging Rust files (*.rs, Cargo.toml, Cargo.lock)..."
-git add "**/*.rs"
-git add "**/Cargo.toml"
+# Define backend directories (excludes website/ and other frontend dirs)
+$backendDirs = @("repak", "repak-x", "oodle_loader", "uasset_toolkit")
 
-# 2. Add C# Source Files (UAssetAPI and UAssetTool)
+# 1. Add Rust Source Files from backend directories only
+Write-Host "Staging Rust files (*.rs, Cargo.toml)..."
+foreach ($dir in $backendDirs) {
+    if (Test-Path $dir) {
+        git add "$dir/**/*.rs"
+        git add "$dir/**/Cargo.toml"
+    }
+}
+# Add root-level Cargo.toml only (NOT Cargo.lock)
+git add "Cargo.toml"
+
+# 2. Add C# Source Files from uasset_toolkit only
 Write-Host "Staging C# files (*.cs, *.csproj, *.sln)..."
-git add "**/*.cs"
-git add "**/*.csproj"
-git add "**/*.sln"
+git add "uasset_toolkit/**/*.cs"
+git add "uasset_toolkit/**/*.csproj"
+git add "uasset_toolkit/**/*.sln"
 
-# 3. Add Root Configuration and Scripts
-Write-Host "Staging scripts and docs (*.bat, *.ps1, *.md)..."
+# 3. Add Root Configuration (root level only)
+Write-Host "Staging root config files..."
 git add "*.bat"
-git add "*.ps1"
 git add "*.md"
 git add ".gitignore"
+git add ".gitmodules"
+git add "rust-toolchain.toml"
 
-# 4. Add submodule pointer if it changed
+# 4. Add scripts directory
+Write-Host "Staging scripts..."
+git add "scripts/**/*.ps1"
+git add "scripts/**/*.bat"
+
+# 5. Add submodule pointer if it changed
 Write-Host "Staging submodule reference (UAssetToolRivals)..."
 git add "UAssetToolRivals"
 
-# 5. Check if anything was staged
+# 6. Check if anything was staged
 $status = git status --porcelain
 if (-not $status) {
     Write-Host "No backend changes detected to commit." -ForegroundColor Yellow
@@ -46,14 +61,14 @@ if (-not $status) {
     exit
 }
 
-# 6. Commit (prepend [run-ci] if this is a release)
+# 7. Commit (prepend [run-ci] if this is a release)
 if ($versionResult.RunCI) {
     $Message = "[run-ci] $Message"
 }
 Write-Host "Committing: $Message" -ForegroundColor Green
 git commit -m "$Message"
 
-# 7. Push
+# 8. Push
 Write-Host "Pushing to origin/main..." -ForegroundColor Cyan
 git push
 
