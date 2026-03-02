@@ -40,7 +40,7 @@ A next-gen Windows and Linux app to install, organize, and share mods — built 
 - **Mod Sharing** — AES-256 encrypted modpack sharing across the globe
 - **Parallel Processing Mode** — toggle between Normal (50%) and Boost (75%) thread usage for faster mod installations
 - **Extract Assets** — extract all assets to a chosen folder from a mod bundle
-- **Browser Extension Install** — receive NexusMods mods from the Repak X browser extension
+- **Browser Extension Install** — receive Nexus Mods mods from the [Repak X browser extension](https://github.com/0xSaturno/Repak-X-Browser-Extension)
 - **Proper Formatting** of Marvel Rivals proprietary asset formats (Skeletal Mesh, Static Mesh, StringTable and Texture)
 - **Utility Tools** — Skip Launcher Patch, Character Database, ReCompress, LOD Disabler shortcut
 - **Auto-Update Checker** — automatically checks and applies new app versions
