@@ -43,6 +43,9 @@ pub struct ModCharacteristics {
     /// Additional categories that can appear alongside the main category
     /// e.g., Blueprint, Text - these are additive and don't override the main category
     pub additional_categories: Vec<String>,
+    /// 4-digit character ID (e.g., "1011" for Hulk)
+    /// Empty if no character or multiple characters detected
+    pub character_id: String,
 }
 
 impl ModCharacteristics {
@@ -129,6 +132,7 @@ pub fn get_pak_characteristics_detailed(mod_contents: Vec<String>) -> ModCharact
     let mut has_text = false;
     let mut character_name: Option<String> = None;  // Full skin-specific name (e.g., "Hawkeye - Default")
     let mut hero_names: HashSet<String> = HashSet::new();  // All detected hero names
+    let mut detected_char_id: Option<String> = None;  // Track the 4-digit character ID
 
     for file in &mod_contents {
         let path = file
@@ -214,9 +218,14 @@ pub fn get_pak_characteristics_detailed(mod_contents: Vec<String>) -> ModCharact
         // We ONLY look at folder structure, NOT filenames, to avoid false positives from shared assets
         let path_matched = CHAR_ID_REGEX.captures(file).and_then(|caps| {
             caps.get(1).and_then(|char_id| {
-                character_data::get_character_name_from_id(char_id.as_str()).map(|name| {
-                    info!("CHAR_ID_REGEX matched ID {} ({}) in path: {}", char_id.as_str(), name, file);
+                let id = char_id.as_str();
+                character_data::get_character_name_from_id(id).map(|name| {
+                    info!("CHAR_ID_REGEX matched ID {} ({}) in path: {}", id, name, file);
                     hero_names.insert(name);
+                    // Store the character ID if this is the first one detected
+                    if detected_char_id.is_none() {
+                        detected_char_id = Some(id.to_string());
+                    }
                     true
                 })
             })
@@ -232,6 +241,10 @@ pub fn get_pak_characteristics_detailed(mod_contents: Vec<String>) -> ModCharact
                     if let Some(name) = character_data::get_character_name_from_id(id) {
                         info!("FILENAME_CHAR_ID_REGEX matched ID {} ({}) in filename: {}", id, name, filename);
                         hero_names.insert(name);
+                        // Store the character ID if this is the first one detected
+                        if detected_char_id.is_none() {
+                            detected_char_id = Some(id.to_string());
+                        }
                     }
                 }
             }
@@ -315,12 +328,20 @@ pub fn get_pak_characteristics_detailed(mod_contents: Vec<String>) -> ModCharact
         base_type
     };
     
+    // Determine final character_id: only set if exactly one hero detected
+    let final_character_id = if heroes.len() == 1 {
+        detected_char_id.unwrap_or_default()
+    } else {
+        String::new()
+    };
+    
     ModCharacteristics {
         mod_type,
         heroes,
         character_name: display_character_name,
         category: category.to_string(),
         additional_categories,
+        character_id: final_character_id,
     }
 }
 
