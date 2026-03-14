@@ -15,6 +15,45 @@ use dirs;
 use serde_json;
 use regex_lite::Regex;
 
+/// Clean up any existing variants of a mod file (.bak_repak, .pak_disabled) before installing
+/// This prevents duplicate entries when reinstalling a toggled-off mod
+fn cleanup_existing_mod_variants(output_dir: &Path, base_name: &str) {
+    let variants = [
+        format!("{}.pak", base_name),
+        format!("{}.bak_repak", base_name),
+        format!("{}.pak_disabled", base_name),
+    ];
+    
+    for variant in &variants {
+        let path = output_dir.join(variant);
+        if path.exists() {
+            info!("Cleaning up existing mod variant: {}", path.display());
+            if let Err(e) = fs::remove_file(&path) {
+                warn!("Failed to remove existing variant {}: {}", path.display(), e);
+            }
+        }
+    }
+    
+    // Also clean up IoStore variants if they exist
+    let iostore_extensions = ["utoc", "ucas"];
+    for ext in &iostore_extensions {
+        let variants = [
+            format!("{}.{}", base_name, ext),
+            format!("{}.{}.bak_repak", base_name, ext),
+            format!("{}.{}.pak_disabled", base_name, ext),
+        ];
+        for variant in &variants {
+            let path = output_dir.join(variant);
+            if path.exists() {
+                info!("Cleaning up existing IoStore variant: {}", path.display());
+                if let Err(e) = fs::remove_file(&path) {
+                    warn!("Failed to remove existing variant {}: {}", path.display(), e);
+                }
+            }
+        }
+    }
+}
+
 /// Recursively copy a directory and all its contents to a destination
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     if !dst.exists() {
@@ -154,6 +193,9 @@ pub fn install_mods_in_viewport(
 
             // Ensure output names follow suffix rule
             let base = normalize_mod_base_name(&installable_mod.mod_name, 7);
+            
+            // Clean up any existing variants before installing
+            cleanup_existing_mod_variants(&output_directory, &base);
             let dests = vec![
                 (pak_path, format!("{}.pak", base)),
                 (utoc_path, format!("{}.utoc", base)),
@@ -171,6 +213,10 @@ pub fn install_mods_in_viewport(
         }
 
         if installable_mod.repak {
+            // Clean up any existing variants before installing
+            let base = normalize_mod_base_name(&installable_mod.mod_name, 7);
+            cleanup_existing_mod_variants(&output_directory, &base);
+            
             if let Err(e) = create_repak_from_pak(
                 installable_mod,
                 output_directory.clone(),
@@ -191,6 +237,10 @@ pub fn install_mods_in_viewport(
                 installable_mod.mod_name
             );
             let base = normalize_mod_base_name(&installable_mod.mod_name, 7);
+            
+            // Clean up any existing variants before installing
+            cleanup_existing_mod_variants(&output_directory, &base);
+            
             std::fs::copy(&installable_mod.mod_path, output_directory.join(format!("{}.pak", &base)))
             .unwrap();
             record_installed_tags(&base, &installable_mod.custom_tags);
@@ -199,6 +249,10 @@ pub fn install_mods_in_viewport(
         }
 
         if installable_mod.is_dir {
+            // Clean up any existing variants before installing
+            let base = normalize_mod_base_name(&installable_mod.mod_name, 7);
+            cleanup_existing_mod_variants(&output_directory, &base);
+            
             // Copy source directory to temp dir to avoid modifying original files
             let temp_dir = match tempfile::tempdir() {
                 Ok(dir) => dir,
