@@ -97,11 +97,16 @@ type ModsListProps = {
     holdToDelete?: boolean
 }
 
-// Get hero image by character name
-function getHeroImage(heroName?: string | null, characterData: CharacterDataEntry[] = []): string | undefined {
+// Get hero image by character ID, with name-based fallback
+function getHeroImage(heroName?: string | null, characterData: CharacterDataEntry[] = [], characterId?: string | null): string | undefined {
     const fallbackKey = '../assets/hero/9999.png'
     const fallbackImage = heroImages[fallbackKey]?.default
-    const charData = characterData || []
+
+    // Direct ID lookup (preferred)
+    if (characterId) {
+        const key = `../assets/hero/${characterId}.png`
+        if (heroImages[key]?.default) return heroImages[key].default
+    }
 
     // Return fallback for missing, Unknown, or Multiple Heroes
     if (!heroName) return fallbackImage
@@ -109,33 +114,11 @@ function getHeroImage(heroName?: string | null, characterData: CharacterDataEntr
         return fallbackImage
     }
 
-    // Check for ID at start (e.g. "1025XXX" -> 1025)
-    const idMatch = heroName.match(/^(10\d{2})/)
-    if (idMatch) {
-        const id = idMatch[1]
-        const key = `../assets/hero/${id}.png`
-        if (heroImages[key]) return heroImages[key].default
-    }
-
-    // Find by name in character data (partial match)
-    const char = charData.find(c => heroName.includes(c.name))
+    // Fallback: find by base hero name in character data
+    const baseName = heroName.includes(' - ') ? heroName.split(' - ')[0] : heroName
+    const char = (characterData || []).find(c => c.name === baseName)
     if (char) {
         const key = `../assets/hero/${char.id}.png`
-        if (heroImages[key]?.default) return heroImages[key].default
-    }
-
-    // Fallback: Try to find any 4-digit hero ID (10XX) pattern anywhere in name
-    const anyIdMatch = heroName.match(/\b(10\d{2})\b/)
-    if (anyIdMatch) {
-        const id = anyIdMatch[1]
-        const key = `../assets/hero/${id}.png`
-        if (heroImages[key]) return heroImages[key].default
-    }
-
-    // Last resort: Check if heroName exactly matches any character and use their ID
-    const charExact = charData.find(c => c.name === heroName)
-    if (charExact) {
-        const key = `../assets/hero/${charExact.id}.png`
         if (heroImages[key]?.default) return heroImages[key].default
     }
 
@@ -281,7 +264,7 @@ const ModItem = memo(function ModItem({
     }, [shouldStartRenaming])
 
     // Get hero image for background/badge (only if either icons or bg are enabled)
-    const heroImage = (showHeroIcons || showHeroBg) ? getHeroImage(characterName, characterData) : null
+    const heroImage = (showHeroIcons || showHeroBg) ? getHeroImage(characterName, characterData, modDetails?.character_id) : null
     const isCardView = viewMode === 'grid' || viewMode === 'compact'
 
     // Detect heroes for multi-hero mods - check both characterName and mod_type

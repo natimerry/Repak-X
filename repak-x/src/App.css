@@ -196,6 +196,7 @@ body {
   opacity: 0.5;
   font-size: 0.65em;
   font-weight: normal;
+  white-space: nowrap;
 }
 
 

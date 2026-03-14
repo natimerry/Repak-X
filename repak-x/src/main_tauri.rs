@@ -2789,17 +2789,55 @@ async fn add_custom_tag(
     // Find or create mod metadata
     if let Some(metadata) = state.mod_metadata.iter_mut().find(|m| m.path == path) {
         if !metadata.custom_tags.contains(&tag) {
-            metadata.custom_tags.push(tag);
+            metadata.custom_tags.push(tag.clone());
         }
     } else {
         state.mod_metadata.push(ModMetadata {
             path,
             custom_name: None,
             folder_id: None,
-            custom_tags: vec![tag],
+            custom_tags: vec![tag.clone()],
         });
     }
+
+    if !state.custom_tag_catalog.contains(&tag) {
+        state.custom_tag_catalog.push(tag);
+        state.custom_tag_catalog.sort();
+    }
     
+    save_state(&state).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn add_tag_to_catalog(
+    tag: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let mut state = state.lock().unwrap();
+
+    if !state.custom_tag_catalog.contains(&tag) {
+        state.custom_tag_catalog.push(tag);
+        state.custom_tag_catalog.sort();
+    }
+
+    save_state(&state).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn delete_tag_from_all_mods(
+    tag: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let mut state = state.lock().unwrap();
+
+    for metadata in state.mod_metadata.iter_mut() {
+        metadata.custom_tags.retain(|t| t != &tag);
+    }
+
+    state.custom_tag_catalog.retain(|t| t != &tag);
+
     save_state(&state).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -2991,7 +3029,11 @@ async fn delete_current_usmap() -> Result<bool, String> {
 async fn get_all_tags(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<String>, String> {
     let state = state.lock().unwrap();
     let mut tags = std::collections::HashSet::new();
-    
+
+    for tag in &state.custom_tag_catalog {
+        tags.insert(tag.clone());
+    }
+
     for metadata in &state.mod_metadata {
         for tag in &metadata.custom_tags {
             tags.insert(tag.clone());
@@ -6389,6 +6431,8 @@ fn main() {
             get_current_usmap_full_path,
             delete_current_usmap,
             get_all_tags,
+            add_tag_to_catalog,
+            delete_tag_from_all_mods,
             toggle_mod,
             check_game_running,
             launch_game,

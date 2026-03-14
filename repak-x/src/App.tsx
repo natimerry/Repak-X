@@ -305,6 +305,7 @@ function App() {
   const [newTagPrompt, setNewTagPrompt] = useState<NewTagPromptState | null>(null) // { callback: (tag) => void } when prompting for new tag name
   const [newFolderFromInstall, setNewFolderFromInstall] = useState<NewFolderFromInstallState | null>(null) // { callback: (name) => void } when prompting for new folder from install panel
   const [renameFolderPrompt, setRenameFolderPrompt] = useState<RenameFolderPromptState | null>(null) // { folderId, currentName } when prompting for folder rename
+  const [deleteTagConfirm, setDeleteTagConfirm] = useState<{ tag: string; modCount: number } | null>(null)
 
   // Update Mod State
   const [updateModState, setUpdateModState] = useState<UpdateModState>({
@@ -1980,6 +1981,32 @@ function App() {
     setAllTags(prev => prev.includes(trimmed) ? prev : [...prev, trimmed].sort())
   }
 
+  const handleDeleteTagFromCatalog = async (tag: string) => {
+    const modCount = mods.filter(m => (m.custom_tags || []).includes(tag)).length
+    if (modCount > 0) {
+      setDeleteTagConfirm({ tag, modCount })
+      return
+    }
+    await executeDeleteTag(tag)
+  }
+
+  const executeDeleteTag = async (tag: string) => {
+    try {
+      await invoke('delete_tag_from_all_mods', { tag })
+      if (filterTag === tag) setFilterTag('')
+      await loadMods()
+      await loadTags()
+    } catch (error) {
+      console.error('Error deleting tag:', error)
+    }
+  }
+
+  const confirmDeleteTag = async () => {
+    if (!deleteTagConfirm) return
+    await executeDeleteTag(deleteTagConfirm.tag)
+    setDeleteTagConfirm(null)
+  }
+
   const handleRemoveTag = async (modPath: string, tag: string) => {
     try {
       await invoke('remove_custom_tag', { modPath, tag })
@@ -2002,14 +2029,16 @@ function App() {
     }
 
     try {
-      // TODO: Implement rename_mod command in backend
-      await invoke('rename_mod', { modPath, newName })
+      const newPath = await invoke('rename_mod', { modPath, newName }) as string
       setStatus(`Renamed to "${newName}"`)
-      await loadMods()
+      const refreshed = await loadMods()
+      if (selectedMod && selectedMod.path === modPath) {
+        const updated = refreshed.find(m => m.path === newPath)
+        setSelectedMod(updated || null)
+      }
     } catch (error) {
-      // Fallback: if command doesn't exist yet, just show error
       setStatus(`Error renaming mod: ${error}`)
-      console.error('rename_mod not implemented yet:', error)
+      console.error('Error renaming mod:', error)
     }
   }
 
@@ -2149,8 +2178,8 @@ function App() {
     const containerWidth = window.innerWidth
     const newLeftWidth = (e.clientX / containerWidth) * 100
 
-    // Constrain right panel between 25% and 40% (left panel 60% - 75%)
-    if (newLeftWidth >= 60 && newLeftWidth <= 75) {
+    // Constrain right panel between 25% and 30% (left panel 70% - 75%)
+    if (newLeftWidth >= 70 && newLeftWidth <= 75) {
       setLeftPanelWidth(newLeftWidth)
       if (isRightPanelOpen) {
         setLastPanelWidth(newLeftWidth)
@@ -2554,13 +2583,6 @@ function App() {
       invoke('discord_set_theme', { theme: themeName }).catch(console.warn)
     }
 
-    await invoke('save_drp_settings', {
-      settings: {
-        enable_drp: settings.enableDrp,
-        accent_color: accentColor
-      }
-    })
-
     // Save to localStorage for persistence
     localStorage.setItem('hideSuffix', JSON.stringify(settings.hideSuffix || false))
     localStorage.setItem('autoOpenDetails', JSON.stringify(settings.autoOpenDetails || false))
@@ -2575,6 +2597,13 @@ function App() {
 
     // Apply hold to delete setting
     setHoldToDelete(settings.holdToDelete !== false)
+
+    await invoke('save_drp_settings', {
+      settings: {
+        enable_drp: settings.enableDrp,
+        accent_color: accentColor
+      }
+    }).catch(console.warn)
 
     // Apply parallel processing setting (if changed)
     if (settings.parallelProcessing !== parallelProcessing) {
@@ -2702,6 +2731,7 @@ function App() {
           allTags={allTags}
           folders={folders}
           onCreateTag={registerTagFromInstallPanel}
+          onDeleteTag={handleDeleteTagFromCatalog}
           onCreateFolder={handleCreateFolderAndReturn}
           onInstall={handleInstallMods}
           onCancel={() => setPanel('install', false)}
@@ -2857,6 +2887,22 @@ function App() {
           setNewFolderFromInstall(null)
         }}
         onCancel={() => setNewFolderFromInstall(null)}
+      />
+
+      <InputPromptModal
+        isOpen={!!deleteTagConfirm}
+        mode="confirm"
+        title="Delete Tag"
+        description={
+          deleteTagConfirm
+            ? `"${deleteTagConfirm.tag}" is applied to ${deleteTagConfirm.modCount} mod${deleteTagConfirm.modCount > 1 ? 's' : ''}. This will remove it from all mods.`
+            : ''
+        }
+        confirmText="Delete"
+        icon={<FaTag />}
+        accentColor="#ef4444"
+        onConfirm={confirmDeleteTag}
+        onCancel={() => setDeleteTagConfirm(null)}
       />
 
       <UpdateModModal
@@ -3037,6 +3083,16 @@ function App() {
               onChange={setFilterTag}
               placeholder="All Tags"
               icon={<FaTag style={{ fontSize: '1.2rem', opacity: 1, color: 'var(--accent-primary)' }} />}
+              onAddNew={() => setNewTagPrompt({
+                callback: async (tag) => {
+                  const trimmed = tag.trim()
+                  if (!trimmed) return
+                  setAllTags(prev => prev.includes(trimmed) ? prev : [...prev, trimmed].sort())
+                  await invoke('add_tag_to_catalog', { tag: trimmed })
+                }
+              })}
+              addNewLabel="+ Create Tag"
+              onDeleteOption={handleDeleteTagFromCatalog}
             />
 
             <AddModSplitButton
@@ -3442,6 +3498,7 @@ function App() {
             onUpdateMod={() => contextMenu.mod && handleInitiateUpdate(contextMenu.mod)}
             onExtractAssets={handleExtractAssets}
             allTags={allTags}
+            onDeleteTag={handleDeleteTagFromCatalog}
             gamePath={gamePath}
             holdToDelete={holdToDelete}
           />

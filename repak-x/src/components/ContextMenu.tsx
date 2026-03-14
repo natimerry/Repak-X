@@ -14,6 +14,7 @@ type ModRecord = {
 type FolderRecord = {
   id: string
   name: string
+  is_root?: boolean
 }
 
 type ContextMenuProps = {
@@ -35,11 +36,12 @@ type ContextMenuProps = {
   onUpdateMod?: () => void
   onExtractAssets?: (mod: ModRecord) => void
   allTags: string[]
+  onDeleteTag?: (tag: string) => void
   gamePath?: string
   holdToDelete?: boolean
 }
 
-const ContextMenu = ({ x, y, mod, folder, onClose, onAssignTag, onNewTag, onMoveTo, onCreateFolder, folders, onDelete, onToggle, onRename, onRenameFolder, onCheckConflicts, onUpdateMod, onExtractAssets, allTags, gamePath, holdToDelete = true }: ContextMenuProps) => {
+const ContextMenu = ({ x, y, mod, folder, onClose, onAssignTag, onNewTag, onMoveTo, onCreateFolder, folders, onDelete, onToggle, onRename, onRenameFolder, onCheckConflicts, onUpdateMod, onExtractAssets, allTags, onDeleteTag, gamePath, holdToDelete = true }: ContextMenuProps) => {
   const [isDeleting, setIsDeleting] = useState(false)
   const deleteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
@@ -195,7 +197,20 @@ const ContextMenu = ({ x, y, mod, folder, onClose, onAssignTag, onNewTag, onMove
           {allTags && allTags.length > 0 && <div className="context-menu-separator" />}
           {allTags && allTags.map(tag => (
             <div key={tag} className="context-menu-item" onClick={() => { onAssignTag(tag); onClose(); }}>
-              {tag}
+              <span className="context-menu-item-label">{tag}</span>
+              {onDeleteTag && (
+                <button
+                  className="context-menu-item-delete"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onDeleteTag(tag)
+                    onClose()
+                  }}
+                  title={`Delete "${tag}" tag`}
+                >
+                  ×
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -209,7 +224,7 @@ const ContextMenu = ({ x, y, mod, folder, onClose, onAssignTag, onNewTag, onMove
           </div>
           <div className="context-menu-separator" />
           <div className="scrollable-menu-list" style={{ maxHeight: '300px', overflowY: 'auto', paddingRight: '4px' }}>
-            {folders.map(f => (
+            {folders.filter(f => !f.is_root).map(f => (
               <div key={f.id} className="context-menu-item" onClick={() => { onMoveTo(f.id); onClose(); }}>
                 {f.name}
               </div>
@@ -217,7 +232,7 @@ const ContextMenu = ({ x, y, mod, folder, onClose, onAssignTag, onNewTag, onMove
           </div>
           <div className="context-menu-separator" />
           <div className="context-menu-item" onClick={() => { onMoveTo(null); onClose(); }}>
-            Root
+            Root ({folders.find(f => f.is_root)?.name || '~mods'})
           </div>
         </div>
       </div>

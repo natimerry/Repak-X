@@ -46,6 +46,7 @@ type InstallModPanelProps = {
   allTags: string[]
   folders?: FolderRecord[]
   onCreateTag?: (tag: string) => void
+  onDeleteTag?: (tag: string) => void
   onCreateFolder?: (name: string) => Promise<string | null>
   onInstall: (modsWithSettings: any[]) => void
   onCancel: () => void
@@ -218,7 +219,7 @@ function parseModType(modType: string | undefined): { character: string | null; 
   return { character, category, additional }
 }
 
-export default function InstallModPanel({ mods, allTags, folders = [], onCreateTag, onCreateFolder, onInstall, onCancel, onNewTag, onNewFolder }: InstallModPanelProps) {
+export default function InstallModPanel({ mods, allTags, folders = [], onCreateTag, onDeleteTag, onCreateFolder, onInstall, onCancel, onNewTag, onNewFolder }: InstallModPanelProps) {
   const [openDropdown, setOpenDropdown] = useState<number | null>(null)
   const [dropdownPos, setDropdownPos] = useState({ x: 0, y: 0 })
   const [modSettings, setModSettings] = useState<Record<number, ModSetting>>(() => buildInitialSettings(mods))
@@ -461,7 +462,19 @@ export default function InstallModPanel({ mods, allTags, folders = [], onCreateT
                                       handleAddTag(idx, tag)
                                       setOpenDropdown(null)
                                     }}>
-                                      {tag}
+                                      <span className="dropdown-item-label">{tag}</span>
+                                      {onDeleteTag && (
+                                        <button
+                                          className="dropdown-item-delete"
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            onDeleteTag(tag)
+                                          }}
+                                          title={`Delete "${tag}" tag`}
+                                        >
+                                          ×
+                                        </button>
+                                      )}
                                     </div>
                                   ))}
                                 </div>
@@ -609,16 +622,9 @@ export default function InstallModPanel({ mods, allTags, folders = [], onCreateT
 function getHeroImage(heroName?: string | null): string | undefined {
   if (!heroName) return undefined
 
-  // Check for ID at start (e.g. "1025XXX" -> 1025)
-  const idMatch = heroName.match(/^(10\d{2})/)
-  if (idMatch) {
-    const id = idMatch[1]
-    const key = `../assets/hero/${id}.png`
-    if (heroImages[key]) return heroImages[key].default
-  }
-
-  // Find by name (partial match)
-  const char = characterData.find(c => heroName.includes(c.name))
+  // Find by base hero name in character data
+  const baseName = heroName.includes(' - ') ? heroName.split(' - ')[0] : heroName
+  const char = characterData.find(c => c.name === baseName)
   if (!char) return undefined
 
   const key = `../assets/hero/${char.id}.png`

@@ -39,6 +39,33 @@
   color: white;
 }
 
+.context-menu-item-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.context-menu-item-delete {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0 2px;
+  line-height: 1;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.context-menu-item:hover .context-menu-item-delete {
+  opacity: 1;
+}
+
+.context-menu-item-delete:hover {
+  color: #ff4d4d;
+}
+
 .context-menu-item.disabled {
   color: var(--text-secondary);
   opacity: 0.5;

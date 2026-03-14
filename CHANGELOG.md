@@ -1,13 +1,14 @@
 # Repak X — Changelog
 
-## [1.2.1](https://github.com/XzantGaming/Repak-X/releases/latest)
-
-# 🚨 Emergency Update - Update as soon as possible
+## [1.2.2](https://github.com/XzantGaming/Repak-X/releases/latest)
 
 
 ### 🔧 Backend / Logic
-- Fixing Parsing for assets with identical names
-- Fixing Linux Updater
+- Fixed an issue where installing a mod bundle with the same name as a disabled one would cause corruption
+- Character IDs listing logic is now more robust
+- Fixed an issue causing mods to be incorrectly flagged as 'Encrypted'
 
 ### 🎨 Frontend / UI
-- Nothing new yet
+- Tag system improvements
+- Fixed an issue where some settings would not save properly
+- Filters, context menu, and details view improvements

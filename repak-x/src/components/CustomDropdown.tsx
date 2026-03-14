@@ -11,6 +11,9 @@ type CustomDropdownProps = {
     icon?: React.ReactNode;
     className?: string;
     disabled?: boolean;
+    onAddNew?: () => void;
+    addNewLabel?: string;
+    onDeleteOption?: (value: string) => void;
 };
 
 /**
@@ -31,7 +34,10 @@ const CustomDropdown = ({
     placeholder = "Select...",
     icon = null,
     className = "",
-    disabled = false
+    disabled = false,
+    onAddNew,
+    addNewLabel = "+ Add New",
+    onDeleteOption
 }: CustomDropdownProps) => {
     const [isOpen, setIsOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement | null>(null);
@@ -113,10 +119,33 @@ const CustomDropdown = ({
                                     onClick={() => handleSelect(option)}
                                     title={optLabel}
                                 >
-                                    {optLabel}
+                                    <span className="custom-dropdown-item-label">{optLabel}</span>
+                                    {onDeleteOption && optValue && (
+                                        <button
+                                            className="custom-dropdown-item-delete"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onDeleteOption(optValue);
+                                            }}
+                                            title={`Delete "${optLabel}"`}
+                                        >
+                                            ×
+                                        </button>
+                                    )}
                                 </div>
                             );
                         })
+                    )}
+                    {onAddNew && (
+                        <>
+                            <div className="custom-dropdown-separator" />
+                            <div
+                                className="custom-dropdown-item add-new"
+                                onClick={() => { onAddNew(); setIsOpen(false); }}
+                            >
+                                {addNewLabel}
+                            </div>
+                        </>
                     )}
                 </div>
             )}

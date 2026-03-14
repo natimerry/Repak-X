@@ -14,6 +14,8 @@ type InputPromptModalProps = {
     onCancel: () => void;
     initialValue?: string;
     accentColor?: string;
+    mode?: 'input' | 'confirm';
+    description?: string;
 };
 
 /**
@@ -41,7 +43,9 @@ const InputPromptModal = ({
     onConfirm,
     onCancel,
     initialValue = '',
-    accentColor = ''
+    accentColor = '',
+    mode = 'input',
+    description = ''
 }: InputPromptModalProps) => {
     const [value, setValue] = useState(initialValue);
     const inputRef = useRef<HTMLInputElement | null>(null);
@@ -60,7 +64,9 @@ const InputPromptModal = ({
 
     const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
-        if (value.trim()) {
+        if (mode === 'confirm') {
+            onConfirm('');
+        } else if (value.trim()) {
             onConfirm(value.trim());
         }
     };
@@ -112,15 +118,19 @@ const InputPromptModal = ({
 
                         {/* Content */}
                         <form onSubmit={handleSubmit} className="prompt-content">
-                            <input
-                                ref={inputRef}
-                                type="text"
-                                value={value}
-                                onChange={(e) => setValue(e.target.value)}
-                                placeholder={placeholder}
-                                className="prompt-input"
-                                autoFocus
-                            />
+                            {mode === 'confirm' ? (
+                                <p className="prompt-description">{description}</p>
+                            ) : (
+                                <input
+                                    ref={inputRef}
+                                    type="text"
+                                    value={value}
+                                    onChange={(e) => setValue(e.target.value)}
+                                    placeholder={placeholder}
+                                    className="prompt-input"
+                                    autoFocus
+                                />
+                            )}
 
                             {/* Actions */}
                             <div className="prompt-actions">
@@ -134,7 +144,7 @@ const InputPromptModal = ({
                                 <button
                                     type="submit"
                                     className="prompt-btn prompt-btn-confirm"
-                                    disabled={!value.trim()}
+                                    disabled={mode === 'input' && !value.trim()}
                                 >
                                     {confirmText}
                                 </button>

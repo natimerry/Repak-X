@@ -175,8 +175,8 @@ export default function ModDetailsPanel({ mod, initialDetails, onClose, characte
               <div className="badges-container">
                 {details.character_name && (
                   <div className="character-badge" title="Character">
-                    {getHeroImage(details.character_name, characterData) && (
-                      <img src={getHeroImage(details.character_name, characterData)} alt="" />
+                    {getHeroImage(details.character_name, characterData, details.character_id) && (
+                      <img src={getHeroImage(details.character_name, characterData, details.character_id)} alt="" />
                     )}
                     {details.character_name}
                   </div>
@@ -334,19 +334,18 @@ function getFileIcon(filename: string) {
   return '📄'
 }
 
-function getHeroImage(heroName?: string | null, characterData: CharacterDataEntry[] = []): string | undefined {
-  if (!heroName) return undefined
-
-  // Check for ID at start (e.g. "1025XXX" -> 1025)
-  const idMatch = heroName.match(/^(10\d{2})/)
-  if (idMatch) {
-    const id = idMatch[1]
-    const key = `../assets/hero/${id}.png`
-    if (heroImages[key]) return heroImages[key].default
+function getHeroImage(heroName?: string | null, characterData: CharacterDataEntry[] = [], characterId?: string | null): string | undefined {
+  // Direct ID lookup (preferred)
+  if (characterId) {
+    const key = `../assets/hero/${characterId}.png`
+    if (heroImages[key]?.default) return heroImages[key].default
   }
 
-  // Find by name (partial match)
-  const char = characterData.find(c => heroName.includes(c.name))
+  if (!heroName) return undefined
+
+  // Fallback: find by base hero name in character data
+  const baseName = heroName.includes(' - ') ? heroName.split(' - ')[0] : heroName
+  const char = characterData.find(c => c.name === baseName)
   if (!char) return undefined
 
   const key = `../assets/hero/${char.id}.png`
