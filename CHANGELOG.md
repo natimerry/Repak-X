@@ -8,7 +8,7 @@
 - Character IDs listing logic is now more robust
 - Fixed an issue causing mods to be incorrectly flagged as 'Encrypted'
 - Fixed Extraction of Materials
-- Weird Quirky behaviour when initiating a mod install using the folder method instead of a Pak where MipMapped textures would lose their ubulk file causing validation issue thus causing the game to use its original mipmaps causing a weird Fade-In/Out effect to happen.
+- Weird Quirky behaviour when initiating a mod install using the folder method instead of a Pak where MipMapped textures would lose their ubulk file causing validation issue thus causing the game to use its original mipmaps causing a weird Fade-In/Out effect to happen. Fixed to not happen anymore
 
 ### 🎨 Frontend / UI
 - Tag system improvements
