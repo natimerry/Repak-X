@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicI32;
 use tempfile::tempdir;
 
-use super::iotoc::{convert_to_iostore_directory, process_texture_files};
+use super::iotoc::convert_to_iostore_directory;
 
 pub fn extract_pak_to_dir(pak: &InstallableMod, install_dir: PathBuf) -> Result<(), repak::Error> {
     let pak_reader = pak.clone().reader.clone().unwrap();
@@ -112,18 +112,14 @@ pub fn repak_dir(
 
     // Note: Mesh patching is now handled automatically by UAssetTool during IoStore conversion
 
-    // Process textures and track which ones had mipmaps removed
-    let processed_textures = if pak.fix_textures {
-        match process_texture_files(&paths) {
-            Ok(textures) => textures,
-            Err(e) => {
-                error!("Failed to process texture files: {}", e);
-                std::collections::HashSet::new()
-            }
-        }
-    } else {
-        std::collections::HashSet::new()
-    };
+    // DISABLED: Texture mipmap stripping has been removed from Repak-X due to .ubulk deletion issues.
+    // The BatchStripMipmapsNative function deletes .ubulk files after processing, but create_mod_iostore
+    // runs afterward and can't find them to include as BulkData chunks, causing broken textures.
+    // Mipmap stripping is still available via UAssetTool CLI for debugging/development.
+    let processed_textures: std::collections::HashSet<String> = std::collections::HashSet::new();
+    if pak.fix_textures {
+        info!("Note: Texture mipmap stripping is disabled in Repak-X. Textures will be packaged as-is.");
+    }
 
     // Filter out temporary/backup files and .ubulk files for NoMipmaps textures
     let original_count = paths.len();

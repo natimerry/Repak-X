@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 use crate::install_mod::install_mod_logic::pak_files::repak_dir;
 use crate::install_mod::InstallableMod;
-use crate::uasset_api_integration::batch_convert_textures_to_inline_with_parallel;
 use crate::utils::collect_files;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicI32;
@@ -44,104 +43,10 @@ pub fn convert_to_iostore_directory(
     let mut paths = vec![];
     collect_files(&mut paths, &to_pak_dir)?;
 
-    // Static Mesh SerializeSize fix
-    if pak.fix_serialsize_header {
-        info!("╔══════════════════════════════════════════════════════════╗");
-        info!("║  STATIC MESH SERIALIZESIZE FIX - STARTING                ║");
-        info!("╚══════════════════════════════════════════════════════════╝");
-        
-        // Check for usmap file (required for unversioned assets) - stored in roaming folder
-        let usmap_full_path = if !pak.usmap_path.is_empty() {
-            // Construct full path to Usmap folder in roaming directory
-            let usmap_dir = dirs::config_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join("Repak-X")
-                .join("Usmap");
-            let usmap_file = usmap_dir.join(&pak.usmap_path);
-            if usmap_file.exists() {
-                Some(usmap_file.to_string_lossy().to_string())
-            } else {
-                warn!("USmap file not found in roaming folder: {}", usmap_file.display());
-                None
-            }
-        } else {
-            warn!("No usmap file specified - detection may be limited for unversioned assets");
-            None
-        };
-        
-        let usmap_path = usmap_full_path.as_deref();
-        
-        match process_static_mesh_serializesize(&to_pak_dir, usmap_path) {
-            Ok(fixed_count) => {
-                if fixed_count > 0 {
-                    info!("✓ Fixed SerializeSize for {} Static Mesh(es)", fixed_count);
-                    info!("   Proceeding with IoStore conversion...");
-                } else {
-                    info!("✓ No Static Mesh SerializeSize fixes needed");
-                }
-            }
-            Err(e) => {
-                error!("✗ Static Mesh SerializeSize fix failed: {}", e);
-                return Err(repak::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("SerializeSize fix failed: {}", e),
-                )));
-            }
-        }
-    }
-
-    // Note: Skeletal Mesh patching is now handled automatically by UAssetTool during IoStore conversion
-
-    // Process textures using UAssetAPI to convert them to inline format
-    // This modifies the .uasset to clear DataResources and embeds mip data in export.Extras
-    // Uses batch processing for much better performance (single UAssetTool process call)
-    let processed_textures: std::collections::HashSet<String> = if pak.fix_textures {
-        info!("Texture fix enabled for mod: {}", pak.mod_name);
-        
-        // Collect all .uasset files that have corresponding .ubulk files (textures needing conversion)
-        let texture_paths: Vec<PathBuf> = paths.iter()
-            .filter(|path| {
-                path.extension() == Some(std::ffi::OsStr::new("uasset")) 
-                    && path.with_extension("ubulk").exists()
-            })
-            .cloned()
-            .collect();
-        
-        if texture_paths.is_empty() {
-            info!("No textures with .ubulk files found - skipping texture conversion");
-            std::collections::HashSet::new()
-        } else {
-            info!("Found {} textures with .ubulk files - batch processing (parallel={})", texture_paths.len(), pak.parallel_processing);
-            
-            // Log USMAP_PATH status for debugging
-            match std::env::var("USMAP_PATH") {
-                Ok(usmap) => info!("[Texture] USMAP_PATH is set: {}", usmap),
-                Err(_) => warn!("[Texture] USMAP_PATH is NOT set - texture parsing may fail!"),
-            }
-            
-            // Log first few texture paths for debugging
-            for (i, path) in texture_paths.iter().take(3).enumerate() {
-                info!("[Texture] File {}: {}", i + 1, path.display());
-            }
-            
-            // Use batch processing for all textures at once with parallel option
-            match batch_convert_textures_to_inline_with_parallel(&texture_paths, pak.parallel_processing) {
-                Ok((success_count, skip_count, error_count, processed_names)) => {
-                    info!("Batch texture conversion complete: {} stripped, {} skipped, {} errors", 
-                          success_count, skip_count, error_count);
-                    
-                    // Convert processed names to HashSet
-                    processed_names.into_iter().collect()
-                }
-                Err(e) => {
-                    error!("Batch texture conversion failed: {}", e);
-                    std::collections::HashSet::new()
-                }
-            }
-        }
-    } else {
-        std::collections::HashSet::new()
-    };
+    // Note: SerializeSize fixing, Skeletal Mesh patching, and texture processing are all
+    // handled automatically by UAssetTool during IoStore conversion (ZenConverter.BuildExportMapWithRecalculatedSizes).
+    // The fix_textures and fix_serialsize_header flags are kept for backwards compatibility but are no-ops.
+    let processed_textures: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // Filter out temporary/backup files that should NOT be included in the IoStore package
     // This includes: .bak files (mesh patch backups), .temp files, patched_files cache,
