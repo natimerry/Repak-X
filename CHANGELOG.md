@@ -13,4 +13,4 @@
 ### 🎨 Frontend / UI
 - Tag system improvements
 - Fixed an issue where some settings would not save properly
-- Filters, context menu, and details view improvements
+- Filters, context menu, and details view improvementsssss
