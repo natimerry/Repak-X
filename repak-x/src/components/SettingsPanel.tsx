@@ -35,6 +35,7 @@ type SettingsPayload = {
   parallelProcessing: boolean;
   enableDrp: boolean;
   holdToDelete: boolean;
+  showSubfolderMods: boolean;
 };
 
 type SettingsPanelProps = {
@@ -69,6 +70,7 @@ export default function SettingsPanel({ settings, onSave, onClose, theme, setThe
   const [autoCheckUpdates, setAutoCheckUpdates] = useState(settings.autoCheckUpdates || false);
   const [parallelProcessing, setLocalParallelProcessing] = useState(settings.parallelProcessing || false);
   const [holdToDelete, setHoldToDelete] = useState(settings.holdToDelete !== false);
+  const [showSubfolderMods, setShowSubfolderMods] = useState(settings.showSubfolderMods !== false);
   const [enableDrp, setEnableDrp] = useState(settings.enableDrp !== false);
   const [showRatMode, setShowRatMode] = useState(false);
 
@@ -93,7 +95,8 @@ export default function SettingsPanel({ settings, onSave, onClose, theme, setThe
       autoCheckUpdates,
       parallelProcessing,
       enableDrp,
-      holdToDelete
+      holdToDelete,
+      showSubfolderMods
     });
     alert.success('Settings Saved', 'Your preferences have been updated.');
     onClose();
@@ -222,6 +225,17 @@ export default function SettingsPanel({ settings, onSave, onClose, theme, setThe
                 >
                   <span style={{ paddingLeft: '4px', fontWeight: 'normal', opacity: 0.9 }}>Show hero background on mod cards</span>
                 </Checkbox>
+              </div>
+              <div>
+                <Checkbox
+                  checked={showSubfolderMods}
+                  onChange={(checked: boolean) => setShowSubfolderMods(checked)}
+                >
+                  <span style={{ paddingLeft: '4px', fontWeight: 'normal', opacity: 0.9 }}>Show mods from subfolders</span>
+                </Checkbox>
+                <p style={{ fontSize: '0.9rem', opacity: 0.6, marginLeft: '28px', marginTop: '0.15rem' }}>
+                  When enabled, selecting a folder also shows mods in its subfolders.
+                </p>
               </div>
               <div>
                 <Checkbox
