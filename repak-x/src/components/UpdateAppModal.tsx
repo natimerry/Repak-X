@@ -67,7 +67,7 @@ function renderChangelogBlocks(raw: string): React.ReactNode {
         elements.push(
             <ul key={key++} style={{ listStyle: 'none', paddingLeft: '1rem', margin: '0.25rem 0' }}>
                 {listItems.map((item, index) => (
-                    <li key={index} style={{ position: 'relative', padding: '0.2rem 0 0.2rem 0.75rem', color: 'rgba(255,255,255,0.75)' }}>
+                    <li key={index} style={{ position: 'relative', padding: '0.2rem 0 0.2rem 0.75rem', color: 'var(--text-secondary)' }}>
                         <span
                             style={{
                                 position: 'absolute',
@@ -96,13 +96,13 @@ function renderChangelogBlocks(raw: string): React.ReactNode {
         flushList();
         if (block.type === 'heading') {
             elements.push(
-                <h3 key={key++} style={{ fontSize: '0.95rem', fontWeight: 700, color: '#fff', margin: '0.7rem 0 0.25rem 0' }}>
+                <h3 key={key++} style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary)', margin: '0.7rem 0 0.25rem 0' }}>
                     {renderInlineMarkdown(block.text)}
                 </h3>
             );
         } else {
             elements.push(
-                <p key={key++} style={{ fontSize: '0.9rem', lineHeight: 1.5, color: 'rgba(255,255,255,0.75)', margin: '0.25rem 0' }}>
+                <p key={key++} style={{ fontSize: '0.9rem', lineHeight: 1.5, color: 'var(--text-secondary)', margin: '0.25rem 0' }}>
                     {renderInlineMarkdown(block.text)}
                 </p>
             );
