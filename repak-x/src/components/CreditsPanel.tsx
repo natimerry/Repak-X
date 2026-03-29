@@ -77,7 +77,7 @@ const SPECIAL_THANKS: Contributor[] = [
         role: 'Where it all started',
         avatar: mrmLogo,
         icon: '🎮',
-        link: 'https://discord.gg/marvelrivalsmodding',
+        link: 'https://discord.gg/mrm',
         badge: 'community'
     },
     {

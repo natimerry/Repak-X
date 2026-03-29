@@ -196,6 +196,7 @@ type AppSettings = {
   parallelProcessing: boolean
   autoCheckUpdates: boolean
   holdToDelete: boolean
+  showSubfolderMods: boolean
 }
 
 function App() {
@@ -206,6 +207,7 @@ function App() {
   const [showHeroBg, setShowHeroBg] = useState(false);
   const [showModType, setShowModType] = useState(false);
   const [showExperimental, setShowExperimental] = useState(false);
+const [showSubfolderMods, setShowSubfolderMods] = useState(true);
   const [autoCheckUpdates, setAutoCheckUpdates] = useState(true);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [enableDrp, setEnableDrp] = useState(false);
@@ -2277,10 +2279,15 @@ function App() {
   const filteredMods = baseFilteredMods.filter(mod => {
     if (selectedFolderId === 'all') return true
 
-    // Match exact folder OR subfolder
-    // e.g. if selected is "Category", match "Category" and "Category/Sub"
-    return mod.folder_id === selectedFolderId ||
-      (mod.folder_id && mod.folder_id.startsWith(selectedFolderId + '/'))
+    if (showSubfolderMods) {
+      // Match exact folder OR subfolder
+      // e.g. if selected is "Category", match "Category" and "Category/Sub"
+      return mod.folder_id === selectedFolderId ||
+        (mod.folder_id && mod.folder_id.startsWith(selectedFolderId + '/'))
+    } else {
+      // Match exact folder only
+      return mod.folder_id === selectedFolderId
+    }
   })
 
   // Keep filteredModsRef in sync for Shift+click range selection
@@ -2594,9 +2601,11 @@ function App() {
     console.debug('[Settings] Saved autoCheckUpdates preference', { autoCheckUpdates: settings.autoCheckUpdates })
     localStorage.setItem('parallelProcessing', JSON.stringify(settings.parallelProcessing || false))
     localStorage.setItem('holdToDelete', JSON.stringify(settings.holdToDelete !== false))
+    localStorage.setItem('showSubfolderMods', JSON.stringify(settings.showSubfolderMods !== false))
 
     // Apply hold to delete setting
     setHoldToDelete(settings.holdToDelete !== false)
+    setShowSubfolderMods(settings.showSubfolderMods !== false)
 
     await invoke('save_drp_settings', {
       settings: {
@@ -2634,6 +2643,7 @@ function App() {
     const savedAutoCheckUpdates = JSON.parse(localStorage.getItem('autoCheckUpdates') ?? 'true');
     const savedParallelProcessing = JSON.parse(localStorage.getItem('parallelProcessing') || 'false');
     const savedHoldToDelete = JSON.parse(localStorage.getItem('holdToDelete') ?? 'true');
+    const savedShowSubfolderMods = JSON.parse(localStorage.getItem('showSubfolderMods') ?? 'true');
 
     handleThemeChange(savedTheme);
     handleAccentChange(savedAccent);
@@ -2652,6 +2662,7 @@ function App() {
     console.debug('[Settings] Loaded autoCheckUpdates preference', { autoCheckUpdates: savedAutoCheckUpdates });
     setParallelProcessing(savedParallelProcessing);
     setHoldToDelete(savedHoldToDelete);
+    setShowSubfolderMods(savedShowSubfolderMods);
 
     if (savedAutoCheckUpdates) {
       console.debug('[Updates] Running startup auto-check for updates');
@@ -2751,7 +2762,7 @@ function App() {
 
       {panels.settings && (
         <SettingsPanel
-          settings={{ globalUsmap, hideSuffix, autoOpenDetails, showHeroIcons, showHeroBg, showModType, showExperimental, enableDrp, parallelProcessing, autoCheckUpdates, holdToDelete }}
+          settings={{ globalUsmap, hideSuffix, autoOpenDetails, showHeroIcons, showHeroBg, showModType, showExperimental, enableDrp, parallelProcessing, autoCheckUpdates, holdToDelete, showSubfolderMods }}
           onSave={handleSaveSettings}
           onClose={() => setPanel('settings', false)}
           theme={theme}
@@ -3217,10 +3228,16 @@ function App() {
                   onContextMenu={handleFolderContextMenu}
                   getCount={(id: string) => {
                     if (id === 'all') return baseFilteredMods.length;
-                    return baseFilteredMods.filter(m =>
-                      m.folder_id === id ||
-                      (m.folder_id && m.folder_id.startsWith(id + '/'))
-                    ).length;
+                    if (showSubfolderMods) {
+                      return baseFilteredMods.filter(m =>
+                        m.folder_id === id ||
+                        (m.folder_id && m.folder_id.startsWith(id + '/'))
+                      ).length;
+                    } else {
+                      return baseFilteredMods.filter(m =>
+                        m.folder_id === id
+                      ).length;
+                    }
                   }}
                   hasFilters={selectedCharacters.size > 0 || selectedCategories.size > 0}
                 />

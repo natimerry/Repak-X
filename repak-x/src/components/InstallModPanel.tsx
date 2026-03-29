@@ -577,7 +577,7 @@ export default function InstallModPanel({ mods, allTags, folders = [], onCreateT
                           {rootFolder && (
                             <div
                               className={`imp-folder-item root-item ${modSettings[idx]?.installSubfolder === rootFolder.id || !modSettings[idx]?.installSubfolder ? 'selected' : ''}`}
-                              onClick={() => updateModSetting(idx, 'installSubfolder', rootFolder.id)}
+                              onClick={() => updateModSetting(idx, 'installSubfolder', null)}
                             >
                               <span className="folder-icon"><VscFolderOpened /></span>
                               <span className="folder-name">{rootFolder.name}</span>
