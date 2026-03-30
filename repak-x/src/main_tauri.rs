@@ -83,6 +83,9 @@ struct AppState {
     /// Enable obfuscation (encrypts IoStore with game's AES key to block FModel extraction)
     #[serde(default)]
     obfuscate: bool,
+    /// Cache for mod details to avoid redundant PAK opens (path -> (mtime, details))
+    #[serde(skip)]
+    mod_details_cache: std::collections::HashMap<PathBuf, (std::time::SystemTime, ModDetails)>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -349,7 +352,26 @@ async fn start_file_watcher(
                          
                          if elapsed.as_millis() >= 500 {
                              *last_time = now;
-                             window_clone.emit("mods_dir_changed", ()).unwrap_or_else(|e| {
+                             
+                             // Collect affected paths
+                             let changed_paths: Vec<String> = event.paths
+                                 .iter()
+                                 .map(|p| p.to_string_lossy().to_string())
+                                 .collect();
+                             
+                             // Determine which folders were affected
+                             let changed_folders: Vec<String> = event.paths
+                                 .iter()
+                                 .filter_map(|p| p.parent())
+                                 .map(|p| p.to_string_lossy().to_string())
+                                 .collect::<std::collections::HashSet<_>>()
+                                 .into_iter()
+                                 .collect();
+                             
+                             window_clone.emit("mods_dir_changed", serde_json::json!({
+                                 "paths": changed_paths,
+                                 "folders": changed_folders,
+                             })).unwrap_or_else(|e| {
                                  error!("Failed to emit mods_dir_changed: {}", e);
                              });
                          }
@@ -499,7 +521,123 @@ async fn get_pak_files(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<Mod
 }
 
 #[tauri::command]
-async fn set_mod_priority(mod_path: String, priority: usize) -> Result<(), String> {
+async fn get_pak_files_in_folder(
+    folder_path: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<ModEntry>, String> {
+    let state = state.lock().unwrap();
+    let game_path = &state.game_path;
+    let folder = PathBuf::from(&folder_path);
+    
+    info!("Loading mods from folder: {}", folder.display());
+    
+    if !folder.exists() {
+        return Err(format!("Folder does not exist: {}", folder.display()));
+    }
+    
+    let mut mods = Vec::new();
+    
+    // Scan only the specified folder (non-recursive for performance)
+    for entry in WalkDir::new(&folder)
+        .max_depth(1) // Only scan this folder, not subdirectories
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        
+        // Skip directories themselves
+        if path.is_dir() {
+            continue;
+        }
+        
+        let ext = path.extension().and_then(|s| s.to_str());
+        
+        // Check for .pak, .bak_repak, and .pak_disabled files
+        if ext == Some("pak") || ext == Some("bak_repak") || ext == Some("pak_disabled") {
+            let is_enabled = ext == Some("pak");
+            
+            // Determine which folder this mod is in
+            let root_folder_name = game_path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("~mods")
+                .to_string();
+            
+            // Determine folder_id based on relative path from game_path
+            let folder_id = if let Some(parent) = path.parent() {
+                if parent == game_path {
+                    Some(root_folder_name)
+                } else {
+                    parent.strip_prefix(game_path)
+                        .map(|p| p.to_string_lossy().replace('\\', "/"))
+                        .ok()
+                }
+            } else {
+                Some(root_folder_name)
+            };
+            
+            let metadata = state.mod_metadata.iter()
+                .find(|m| {
+                    m.path == path || 
+                    m.path.with_extension("pak") == path || 
+                    m.path.with_extension("bak_repak") == path ||
+                    m.path.with_extension("pak_disabled") == path
+                });
+            
+            let ucas_path = path.with_extension("ucas");
+            let file_size = if ucas_path.exists() {
+                std::fs::metadata(&ucas_path)
+                    .map(|m| m.len())
+                    .unwrap_or(0)
+            } else {
+                std::fs::metadata(path)
+                    .map(|m| m.len())
+                    .unwrap_or(0)
+            };
+            
+            // Calculate priority
+            let mut priority = 0;
+            let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            
+            if file_stem.starts_with("!") {
+                priority = 0;
+            } else if file_stem.ends_with("_P") {
+                let base_no_p = file_stem.strip_suffix("_P").unwrap();
+                let re_nums = Regex::new(r"_(\d+)$").unwrap();
+                if let Some(caps) = re_nums.captures(base_no_p) {
+                    let nums = &caps[1];
+                    if nums.chars().all(|c| c == '9') {
+                        let actual_nines = nums.len();
+                        if actual_nines >= 7 {
+                            priority = actual_nines - 6;
+                        }
+                    }
+                }
+            }
+            
+            mods.push(ModEntry {
+                path: path.to_path_buf(),
+                enabled: is_enabled,
+                custom_name: metadata.and_then(|m| m.custom_name.clone()),
+                folder_id,
+                custom_tags: metadata.map(|m| m.custom_tags.clone()).unwrap_or_default(),
+                file_size,
+                priority,
+                character_name: None,
+                skin_name: None,
+            });
+        }
+    }
+    
+    info!("Found {} mod(s) in folder", mods.len());
+    Ok(mods)
+}
+
+#[tauri::command]
+async fn set_mod_priority(
+    mod_path: String,
+    priority: usize,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
     let path = PathBuf::from(&mod_path);
     if !path.exists() {
          return Err("Mod file does not exist".to_string());
@@ -569,6 +707,12 @@ async fn set_mod_priority(mod_path: String, priority: usize) -> Result<(), Strin
              let new_f = new_path.with_extension(ext);
              let _ = std::fs::rename(old_f, new_f);
         }
+    }
+    
+    // Invalidate cache for old path
+    {
+        let mut state_guard = state.lock().unwrap();
+        state_guard.mod_details_cache.remove(&path);
     }
     
     Ok(())
@@ -1814,7 +1958,11 @@ async fn install_mods(
 }
 
 #[tauri::command]
-async fn delete_mod(path: String, window: Window) -> Result<(), String> {
+async fn delete_mod(
+    path: String,
+    window: Window,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
     let path_buf = PathBuf::from(&path);
     log::info!("delete_mod called with path: {}", path);
     
@@ -1855,6 +2003,12 @@ async fn delete_mod(path: String, window: Window) -> Result<(), String> {
         log::info!("Deleted main mod file: {:?}", actual_path);
     } else {
         log::warn!("Main mod file does not exist: {:?}", actual_path);
+    }
+    
+    // Invalidate cache for deleted path
+    {
+        let mut state_guard = state.lock().unwrap();
+        state_guard.mod_details_cache.remove(&actual_path);
     }
 
     // Determine the base path for IoStore files (always based on .pak name, not .bak_repak)
@@ -2328,7 +2482,12 @@ async fn copy_to_clipboard(text: String, window: Window) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn rename_mod(mod_path: String, new_name: String, window: Window) -> Result<String, String> {
+async fn rename_mod(
+    mod_path: String,
+    new_name: String,
+    window: Window,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<String, String> {
     let old_path_buf = PathBuf::from(&mod_path);
     
     info!("rename_mod called: mod_path={}, new_name={}", mod_path, new_name);
@@ -2438,6 +2597,12 @@ async fn rename_mod(mod_path: String, new_name: String, window: Window) -> Resul
         let error_msg = format!("Failed to rename file: {}", e);
         toast_events::emit_rename_failed(&window, &error_msg);
         return Err(error_msg);
+    }
+    
+    // Invalidate cache for old path
+    {
+        let mut state_guard = state.lock().unwrap();
+        state_guard.mod_details_cache.remove(&old_path_buf);
     }
     
     info!("rename_mod: successfully renamed {} to {}", mod_path, new_path.display());
@@ -2920,7 +3085,11 @@ async fn get_all_tags(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<Stri
 }
 
 #[tauri::command]
-async fn toggle_mod(mod_path: String, window: Window) -> Result<bool, String> {
+async fn toggle_mod(
+    mod_path: String,
+    window: Window,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<bool, String> {
     let path = PathBuf::from(&mod_path);
     
     if !path.exists() {
@@ -2943,6 +3112,12 @@ async fn toggle_mod(mod_path: String, window: Window) -> Result<bool, String> {
         let error_msg = format!("Failed to toggle mod: {}", e);
         toast_events::emit_toggle_failed(&window, &error_msg);
         return Err(error_msg);
+    }
+    
+    // Invalidate cache for old path
+    {
+        let mut state_guard = state.lock().unwrap();
+        state_guard.mod_details_cache.remove(&path);
     }
     
     Ok(!is_enabled)
@@ -5246,7 +5421,11 @@ struct ModDetails {
 }
 
 #[tauri::command]
-async fn get_mod_details(mod_path: String, _detect_blueprint: Option<bool>) -> Result<ModDetails, String> {
+async fn get_mod_details(
+    mod_path: String,
+    _detect_blueprint: Option<bool>,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<ModDetails, String> {
     use repak::PakBuilder;
     use repak::utils::AesKey;
     use std::str::FromStr;
@@ -5260,6 +5439,25 @@ async fn get_mod_details(mod_path: String, _detect_blueprint: Option<bool>) -> R
     if !path.exists() {
         return Err(format!("Mod file does not exist: {}", path.display()));
     }
+    
+    // --- Cache check ---
+    let mtime = std::fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .map_err(|e| format!("Failed to get file metadata: {}", e))?;
+    
+    {
+        let state_guard = state.lock().unwrap();
+        if let Some((cached_mtime, cached_details)) = state_guard.mod_details_cache.get(&path) {
+            if *cached_mtime == mtime {
+                info!("Cache hit for mod: {}", path.display());
+                return Ok(cached_details.clone());
+            } else {
+                info!("Cache stale for mod: {} (mtime changed)", path.display());
+            }
+        }
+    }
+    info!("Cache miss for mod: {}, opening PAK...", path.display());
+    // --- End cache check ---
     
     // Check if it's IoStore (has .utoc file) BEFORE trying to open the PAK
     // Obfuscated IoStore mods have encrypted PAK indexes with zeroed EncryptionKeyGuid,
@@ -5355,7 +5553,7 @@ async fn get_mod_details(mod_path: String, _detect_blueprint: Option<bool>) -> R
         false
     };
 
-    Ok(ModDetails {
+    let details = ModDetails {
         mod_name,
         mod_type: characteristics.mod_type,
         character_name: characteristics.character_name,
@@ -5367,7 +5565,17 @@ async fn get_mod_details(mod_path: String, _detect_blueprint: Option<bool>) -> R
         is_iostore,
         is_encrypted,
         has_blueprint,
-    })
+    };
+    
+    // --- Cache store ---
+    {
+        let mut state_guard = state.lock().unwrap();
+        state_guard.mod_details_cache.insert(path.clone(), (mtime, details.clone()));
+        info!("Cached details for mod: {}", path.display());
+    }
+    // --- End cache store ---
+    
+    Ok(details)
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -6228,6 +6436,7 @@ fn main() {
             auto_detect_game_path,
             start_file_watcher,
             get_pak_files,
+            get_pak_files_in_folder,
             parse_dropped_files,
             install_mods,
             quick_organize,
