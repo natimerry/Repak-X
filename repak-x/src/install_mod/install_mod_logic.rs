@@ -185,7 +185,15 @@ pub fn install_mods_in_viewport(
             subfolder_path
         };
 
+        // Debug logging for install path tracing
+        crate::install_mod::write_install_debug(&format!(
+            "=== Installing mod: name={}, iostore={}, repak={}, is_dir={}, mod_path={}, mod_path_exists={}",
+            installable_mod.mod_name, installable_mod.iostore, installable_mod.repak, 
+            installable_mod.is_dir, installable_mod.mod_path.display(), installable_mod.mod_path.exists()
+        ));
+
         if installable_mod.iostore {
+            crate::install_mod::write_install_debug("  -> Taking IOSTORE COPY path");
             // copy the iostore files
             let pak_path = installable_mod.mod_path.with_extension("pak");
             let utoc_path = installable_mod.mod_path.with_extension("utoc");
@@ -203,8 +211,10 @@ pub fn install_mods_in_viewport(
             ];
 
             for (src, dest_name) in dests {
+                crate::install_mod::write_install_debug(&format!("  Copying {} -> {}", src.display(), dest_name));
                 if let Err(e) = std::fs::copy(&src, output_directory.join(&dest_name)) {
                     error!("Unable to copy file {:?}: {:?}", src, e);
+                    crate::install_mod::write_install_debug(&format!("  ERROR copying: {}", e));
                 }
             }
             // Record tags for pickup by main app
@@ -213,6 +223,7 @@ pub fn install_mods_in_viewport(
         }
 
         if installable_mod.repak {
+            crate::install_mod::write_install_debug("  -> Taking REPAK path (extract + IoStore convert)");
             // Clean up any existing variants before installing
             let base = normalize_mod_base_name(&installable_mod.mod_name, 7);
             cleanup_existing_mod_variants(&output_directory, &base);

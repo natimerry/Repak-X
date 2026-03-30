@@ -1,7 +1,6 @@
 pub mod install_mod_logic;
 
 use crate::install_mod::install_mod_logic::archives::{extract_zip, extract_rar, extract_7z};
-use crate::uasset_detection::{detect_texture_files, detect_static_mesh_files};
 use crate::utils::{collect_files, get_current_pak_characteristics};
 use crate::utoc_utils::read_utoc;
 use log::{debug, error};
@@ -23,9 +22,6 @@ pub struct InstallableMod {
     pub custom_tags: Vec<String>,
     pub custom_tag_input: String,
     pub repak: bool,
-    pub fix_textures: bool,
-    pub fix_serialsize_header: bool,
-    pub usmap_path: String,
     pub is_dir: bool,
     pub editing: bool,
     pub path_hash_seed: String,
@@ -65,9 +61,6 @@ impl Default for InstallableMod {
             custom_tags: Vec::new(),
             custom_tag_input: String::new(),
             repak: false,
-            fix_textures: false,
-            fix_serialsize_header: false,
-            usmap_path: String::new(),
             is_dir: false,
             editing: false,
             path_hash_seed: "".to_string(),
@@ -106,6 +99,8 @@ pub static AES_KEY: LazyLock<AesKey> = LazyLock::new(|| {
 });
 
 fn find_mods_from_archive(path: &str) -> Vec<InstallableMod> {
+    write_install_debug(&format!("=== find_mods_from_archive called: path={} ===", path));
+    write_install_debug(&format!("  path exists: {}", std::path::Path::new(path).exists()));
     let mut new_mods = Vec::<InstallableMod>::new();
     let mut processed_mods = std::collections::HashSet::new();
     let mut found_pak_files = false;
@@ -119,18 +114,22 @@ fn find_mods_from_archive(path: &str) -> Vec<InstallableMod> {
         if file_path.is_file() && file_path.extension().and_then(|s| s.to_str()) == Some("pak") {
             found_pak_files = true;
             let mod_base_name = file_path.file_stem().unwrap().to_str().unwrap().to_string();
+            write_install_debug(&format!("  Found PAK: {} (base_name={})", file_path.display(), mod_base_name));
             
             // Skip if we've already processed this mod
             if processed_mods.contains(&mod_base_name) {
+                write_install_debug(&format!("  Skipping duplicate: {}", mod_base_name));
                 continue;
             }
             processed_mods.insert(mod_base_name.clone());
             
             let utoc_path = file_path.with_extension("utoc");
             let ucas_path = file_path.with_extension("ucas");
+            write_install_debug(&format!("  utoc exists: {}, ucas exists: {}", utoc_path.exists(), ucas_path.exists()));
 
             // Check if this is an iostore mod (has all three files: pak, utoc, ucas)
             if utoc_path.exists() && ucas_path.exists() {
+                write_install_debug("  -> IoStore path (copy)");
                 // This is an iostore mod - read file list from utoc (works with obfuscated mods)
                 // Don't require PAK reading since obfuscated mods have encrypted PAK indexes
                 let files = read_utoc(&utoc_path);
@@ -170,6 +169,7 @@ fn find_mods_from_archive(path: &str) -> Vec<InstallableMod> {
             }
             // This is a standalone .pak file
             else {
+                write_install_debug("  -> Standalone PAK path (repak)");
                 let builder = repak::PakBuilder::new()
                     .key(AES_KEY.clone().0)
                     .reader(&mut BufReader::new(File::open(file_path).unwrap()));
@@ -183,16 +183,10 @@ fn find_mods_from_archive(path: &str) -> Vec<InstallableMod> {
                     // Check if this is an Audio or Movies mod (these should skip repak workflow)
                     let is_audio_or_movie = modtype.contains("Audio") || modtype.contains("Movies");
                     
-                    // Auto-detect texture files (mesh patching is handled automatically by UAssetTool)
-                    let auto_fix_textures = detect_texture_files(&files);
-                    let auto_fix_static_mesh = detect_static_mesh_files(&files);
-
                     let installable_mod = InstallableMod {
                         mod_name: mod_base_name,
                         mod_type: modtype.to_string(),
                         repak: !is_audio_or_movie,  // Only use repak if NOT Audio/Movies
-                        fix_textures: auto_fix_textures,
-                        fix_serialsize_header: auto_fix_static_mesh,
                         is_dir: false,
                         reader: Some(builder),
                         mod_path: file_path.to_path_buf(),
@@ -207,11 +201,15 @@ fn find_mods_from_archive(path: &str) -> Vec<InstallableMod> {
                         ..Default::default()
                     };
 
+                    write_install_debug(&format!("  Created InstallableMod: name={}, repak={}, iostore={}, type={}, files={}", installable_mod.mod_name, installable_mod.repak, installable_mod.iostore, installable_mod.mod_type, installable_mod.total_files));
                     new_mods.push(installable_mod);
+                } else {
+                    write_install_debug("  ERROR: Failed to open PAK file");
                 }
             }
         }
     }
+    write_install_debug(&format!("find_mods_from_archive result: {} mods found, found_pak_files={}", new_mods.len(), found_pak_files));
 
     // Second pass: if no .pak files found, look for content folders with .uasset files
     // This handles archives that contain loose mod files (folders) instead of pre-packed .pak files
@@ -261,16 +259,10 @@ fn find_mods_from_archive(path: &str) -> Vec<InstallableMod> {
                         let has_uassets = contains_uasset_files(&file_strings);
                         let is_audio_or_movies = modtype.contains("Audio") || modtype.contains("Movies");
                         
-                        // Auto-detect texture files (mesh patching is handled automatically by UAssetTool)
-                        let auto_fix_textures = detect_texture_files(&file_strings);
-                        let auto_fix_static_mesh = detect_static_mesh_files(&file_strings);
-                        
                         let installable_mod = InstallableMod {
                             mod_name,
                             mod_type: modtype.to_string(),
                             repak: !is_audio_or_movies,  // Will go through convert_to_iostore_directory
-                            fix_textures: auto_fix_textures,
-                            fix_serialsize_header: auto_fix_static_mesh,
                             is_dir: true,  // Mark as directory so it uses convert_to_iostore_directory
                             reader: None,
                             mod_path: entry_path,
@@ -319,15 +311,10 @@ fn find_mods_from_archive(path: &str) -> Vec<InstallableMod> {
                     let modtype = get_current_pak_characteristics(file_strings.clone());
                     let has_uassets = contains_uasset_files(&file_strings);
                     let is_audio_or_movies = modtype.contains("Audio") || modtype.contains("Movies");
-                    let auto_fix_textures = detect_texture_files(&file_strings);
-                    let auto_fix_static_mesh = detect_static_mesh_files(&file_strings);
-                    
                     let installable_mod = InstallableMod {
                         mod_name,
                         mod_type: modtype.to_string(),
                         repak: !is_audio_or_movies,
-                        fix_textures: auto_fix_textures,
-                        fix_serialsize_header: auto_fix_static_mesh,
                         is_dir: true,
                         reader: None,
                         mod_path: archive_root.to_path_buf(),
@@ -351,7 +338,28 @@ fn find_mods_from_archive(path: &str) -> Vec<InstallableMod> {
     new_mods
 }
 
+pub fn write_install_debug(msg: &str) {
+    if let Some(config_dir) = dirs::config_dir() {
+        let debug_log = config_dir.join("Repak-X").join("install_debug.log");
+        let _ = std::fs::create_dir_all(debug_log.parent().unwrap());
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&debug_log) {
+            let _ = writeln!(f, "{}", msg);
+        }
+    }
+}
+
 fn map_to_mods_internal(paths: &[PathBuf]) -> Vec<InstallableMod> {
+    // Clear debug log
+    if let Some(config_dir) = dirs::config_dir() {
+        let debug_log = config_dir.join("Repak-X").join("install_debug.log");
+        let _ = std::fs::write(&debug_log, "");
+    }
+    write_install_debug(&format!("=== map_to_mods_internal called with {} paths ===", paths.len()));
+    for p in paths {
+        write_install_debug(&format!("  path: {} (exists={}, ext={:?})", p.display(), p.exists(), p.extension()));
+    }
+    
     let mut extensible_vec: Vec<InstallableMod> = Vec::new();
     let mut installable_mods = paths
         .iter()
@@ -359,6 +367,7 @@ fn map_to_mods_internal(paths: &[PathBuf]) -> Vec<InstallableMod> {
             let is_dir = path.clone().is_dir();
             let extension = path.extension().unwrap_or_default();
             let is_archive = extension == "zip" || extension == "rar" || extension == "7z";
+            write_install_debug(&format!("Processing: {} is_dir={} is_archive={} ext={:?}", path.display(), is_dir, is_archive, extension));
             
             // Check if this is an IoStore package (has .utoc and .ucas companions)
             let is_iostore = if extension == "pak" {
@@ -372,8 +381,6 @@ fn map_to_mods_internal(paths: &[PathBuf]) -> Vec<InstallableMod> {
             let mut modtype = "Unknown".to_string();
             let mut pak = None;
             let mut len = 1;
-            let mut auto_fix_textures = false;
-            let mut auto_fix_static_mesh = false;
             let mut has_uassets = true; // Default to true for safety
 
             if !is_dir && !is_archive {
@@ -388,15 +395,21 @@ fn map_to_mods_internal(paths: &[PathBuf]) -> Vec<InstallableMod> {
                     modtype = get_current_pak_characteristics(files.clone());
                     has_uassets = contains_uasset_files(&files);
                     
-                    // Try to open PAK for reader (optional - may fail for obfuscated mods)
-                    pak = repak::PakBuilder::new()
-                        .key(AES_KEY.clone().0)
-                        .reader(&mut BufReader::new(File::open(path.clone()).unwrap()))
-                        .ok();
+                    // Try to open PAK for reader (optional - may fail for obfuscated mods or missing files)
+                    pak = File::open(path.clone()).ok().and_then(|f| {
+                        repak::PakBuilder::new()
+                            .key(AES_KEY.clone().0)
+                            .reader(&mut BufReader::new(f))
+                            .ok()
+                    });
                 } else {
+                    let file = File::open(path.clone()).map_err(|e| {
+                        error!("Cannot open PAK file {}: {}", path.display(), e);
+                        repak::Error::Other(format!("Cannot open file: {}", e))
+                    })?;
                     let builder = repak::PakBuilder::new()
                         .key(AES_KEY.clone().0)
-                        .reader(&mut BufReader::new(File::open(path.clone()).unwrap()));
+                        .reader(&mut BufReader::new(file));
                     match builder {
                         Ok(builder) => {
                             pak = Some(builder.clone());
@@ -407,9 +420,6 @@ fn map_to_mods_internal(paths: &[PathBuf]) -> Vec<InstallableMod> {
                             modtype = get_current_pak_characteristics(files.clone());
                             has_uassets = contains_uasset_files(&files);
                             
-                            // Auto-detect texture files (mesh patching is handled automatically by UAssetTool)
-                            auto_fix_textures = detect_texture_files(&files);
-                            auto_fix_static_mesh = detect_static_mesh_files(&files);
                         }
                         Err(e) => {
                             error!("Error reading pak file: {}", e);
@@ -430,20 +440,19 @@ fn map_to_mods_internal(paths: &[PathBuf]) -> Vec<InstallableMod> {
                 modtype = get_current_pak_characteristics(files.clone());
                 has_uassets = contains_uasset_files(&files);
                 
-                // Auto-detect texture files (mesh patching is handled automatically by UAssetTool)
-                auto_fix_textures = detect_texture_files(&files);
-                auto_fix_static_mesh = detect_static_mesh_files(&files);
             }
 
             if is_archive {
                 modtype = "Archive".to_string();
-                let tempdir = tempdir()
-                    .unwrap()
-                    .path()
-                    .as_os_str()
-                    .to_str()
-                    .unwrap()
-                    .to_string();
+                // IMPORTANT: Keep the TempDir alive so the directory isn't deleted
+                // before find_mods_from_archive reads the PAK files inside it.
+                // We leak the TempDir intentionally so the temp directory persists
+                // until the installation completes (OS cleans up on process exit).
+                let temp_dir_obj = tempdir().unwrap();
+                let tempdir = temp_dir_obj.path().to_str().unwrap().to_string();
+                // Leak the TempDir to prevent cleanup - the extracted PAK files
+                // must remain accessible during the entire installation flow
+                std::mem::forget(temp_dir_obj);
 
                 if extension == "zip" {
                     extract_zip(path.to_str().unwrap(), &tempdir).expect("Unable to extract zip archive")
@@ -467,8 +476,6 @@ fn map_to_mods_internal(paths: &[PathBuf]) -> Vec<InstallableMod> {
                 mod_name: path.file_stem().unwrap().to_str().unwrap().to_string(),
                 mod_type: modtype,
                 repak: should_repak,
-                fix_textures: auto_fix_textures,
-                fix_serialsize_header: auto_fix_static_mesh,
                 is_dir,
                 reader: pak,
                 mod_path: path.clone(),

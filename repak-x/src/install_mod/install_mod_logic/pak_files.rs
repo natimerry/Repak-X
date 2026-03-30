@@ -12,6 +12,8 @@ use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicI32;
 use tempfile::tempdir;
+use dirs;
+use chrono;
 
 use super::iotoc::convert_to_iostore_directory;
 
@@ -20,6 +22,32 @@ pub fn extract_pak_to_dir(pak: &InstallableMod, install_dir: PathBuf) -> Result<
 
     let mount_point = PathBuf::from(pak_reader.mount_point());
     let prefix = Path::new("../../../");
+    
+    info!("[ExtractPak] mod_name={}, mod_path={}", pak.mod_name, pak.mod_path.display());
+    info!("[ExtractPak] mount_point='{}', install_dir={}", mount_point.display(), install_dir.display());
+    let all_files = pak_reader.files();
+    info!("[ExtractPak] {} files in PAK. First 5: {:?}", all_files.len(), &all_files[..all_files.len().min(5)]);
+    
+    // Write debug info to a file for easy inspection
+    if let Some(config_dir) = dirs::config_dir() {
+        let debug_log = config_dir.join("Repak-X").join("extract_pak_debug.log");
+        let _ = std::fs::create_dir_all(debug_log.parent().unwrap());
+        let mut log_content = format!("=== ExtractPak Debug ({}) ===\n", chrono::Local::now().format("%H:%M:%S"));
+        log_content += &format!("mod_name: {}\n", pak.mod_name);
+        log_content += &format!("mod_path: {}\n", pak.mod_path.display());
+        log_content += &format!("mod_path exists: {}\n", pak.mod_path.exists());
+        log_content += &format!("mount_point: '{}'\n", mount_point.display());
+        log_content += &format!("install_dir: {}\n", install_dir.display());
+        log_content += &format!("total_files: {}\n", all_files.len());
+        log_content += "first 10 files:\n";
+        for f in all_files.iter().take(10) {
+            let full = mount_point.join(f);
+            let stripped = full.strip_prefix(prefix).map(|p| p.display().to_string()).unwrap_or("STRIP_FAILED".to_string());
+            log_content += &format!("  entry='{}' -> full='{}' -> stripped='{}'\n", f, full.display(), stripped);
+        }
+        let _ = std::fs::write(&debug_log, &log_content);
+        info!("[ExtractPak] Debug log written to: {}", debug_log.display());
+    }
 
     struct UnpakEntry {
         entry_path: String,
@@ -110,16 +138,7 @@ pub fn repak_dir(
     let mut paths = vec![];
     collect_files(&mut paths, &to_pak_dir)?;
 
-    // Note: Mesh patching is now handled automatically by UAssetTool during IoStore conversion
-
-    // DISABLED: Texture mipmap stripping has been removed from Repak-X due to .ubulk deletion issues.
-    // The BatchStripMipmapsNative function deletes .ubulk files after processing, but create_mod_iostore
-    // runs afterward and can't find them to include as BulkData chunks, causing broken textures.
-    // Mipmap stripping is still available via UAssetTool CLI for debugging/development.
     let processed_textures: std::collections::HashSet<String> = std::collections::HashSet::new();
-    if pak.fix_textures {
-        info!("Note: Texture mipmap stripping is disabled in Repak-X. Textures will be packaged as-is.");
-    }
 
     // Filter out temporary/backup files and .ubulk files for NoMipmaps textures
     let original_count = paths.len();

@@ -67,7 +67,6 @@ struct AppState {
     game_path: PathBuf,
     folders: Vec<ModFolder>,
     mod_metadata: Vec<ModMetadata>,
-    usmap_path: String,
     auto_check_updates: bool,
     hide_internal_suffix: bool,
     custom_tag_catalog: Vec<String>,
@@ -581,8 +580,6 @@ struct InstallableModInfo {
     mod_type: String,
     is_dir: bool,
     path: String,
-    auto_fix_texture: bool,
-    auto_fix_serialize_size: bool,
     auto_to_repak: bool,
     /// Whether the mod contains any .uasset/.uexp/.ubulk/.umap files
     /// Used by frontend to lock/unlock certain toggles (e.g., fix texture only applies to uasset mods)
@@ -604,28 +601,6 @@ async fn parse_dropped_files(
     
     // Emit start detection log
     let _ = window.emit("install_log", "[Detection] Starting UAssetAPI detection...");
-    
-    // Set USMAP_PATH for detection (from roaming folder)
-    {
-        let state_guard = state.lock().unwrap();
-        let usmap_filename = state_guard.usmap_path.clone();
-        
-        if !usmap_filename.is_empty() {
-            if let Some(usmap_full_path) = get_usmap_full_path(&usmap_filename) {
-                std::env::set_var("USMAP_PATH", &usmap_full_path);
-                let msg = format!("[Detection] Set USMAP_PATH: {}", usmap_full_path.display());
-                info!("{}", msg);
-                let _ = window.emit("install_log", &msg);
-            } else {
-                let expected_path = usmap_dir().join(&usmap_filename);
-                let msg = format!("[Detection] WARNING: USMAP not found at: {}", expected_path.display());
-                info!("{}", msg);
-                let _ = window.emit("install_log", &msg);
-            }
-        } else {
-            let _ = window.emit("install_log", "[Detection] WARNING: No USMAP configured in settings");
-        }
-    }
     
     let mut mods = Vec::new();
     
@@ -653,15 +628,13 @@ async fn parse_dropped_files(
             .unwrap_or("Unknown")
             .to_string();
         
-        // Determine mod type and auto-detection flags
-        // 4-tuple: (mod_type, auto_fix_texture, auto_fix_serialize_size, contains_uassets)
-        // Note: mesh patching is handled automatically by UAssetTool
-        let (mod_type, auto_fix_texture, auto_fix_serialize_size, contains_uassets) = if path.is_dir() {
+        // Determine mod type and contains_uassets flag
+        let (mod_type, contains_uassets) = if path.is_dir() {
             // First check if directory contains multiple PAK files - if so, process each PAK separately
             use walkdir::WalkDir;
             let mut pak_files = Vec::new();
             
-            for entry in WalkDir::new(&path).max_depth(1).into_iter().filter_map(|e| e.ok()) {
+            for entry in WalkDir::new(&path).into_iter().filter_map(|e| e.ok()) {
                 let entry_path = entry.path();
                 if let Some(ext) = entry_path.extension().and_then(|s| s.to_str()) {
                     if ext == "pak" {
@@ -681,7 +654,7 @@ async fn parse_dropped_files(
                     }
                 }
                 
-                return Ok(mods);
+                continue;
             } else if pak_files.len() == 1 {
                 // Single PAK file in directory - process it directly (handles IoStore if present)
                 let pak_file = &pak_files[0];
@@ -692,7 +665,7 @@ async fn parse_dropped_files(
                     mods.push(pak_mod);
                 }
                 
-                return Ok(mods);
+                continue;
             }
             
             // No PAK files - analyze directory contents for loose assets
@@ -768,12 +741,12 @@ async fn parse_dropped_files(
                     let has_uassets = contains_uasset_files(&all_files_absolute);
                     let _ = window.emit("install_log", format!("[Detection] Contains UAssets: {}", has_uassets));
                     
-                    (mod_type, has_texture, false, has_uassets)
+                    (mod_type, has_uassets)
                 } else {
-                    ("Directory".to_string(), false, false, true) // Default to true for safety
+                    ("Directory".to_string(), true) // Default to true for safety
                 }
             } else {
-                ("Directory".to_string(), false, false, true) // Default to true for safety
+                ("Directory".to_string(), true) // Default to true for safety
             }
         } else {
             // Get file extension
@@ -815,17 +788,55 @@ async fn parse_dropped_files(
                         }
                         
                         if pak_files_in_archive.len() > 1 {
-                            // Multiple PAK files found in archive
-                            let _ = window.emit("install_log", format!("[Detection] Found {} PAK files in archive, processing each separately", pak_files_in_archive.len()));
+                            // Multiple PAK files found in archive - analyze each separately
+                            // All entries use the ORIGINAL ARCHIVE path so install side can re-extract
+                            let _ = window.emit("install_log", format!("[Detection] Found {} PAK files in archive, analyzing each...", pak_files_in_archive.len()));
                             
-                            for pak_file_path in pak_files_in_archive {
-                                let pak_mods = Box::pin(parse_dropped_files(vec![pak_file_path.to_string_lossy().to_string()], state.clone(), window.clone())).await?;
-                                for pak_mod in pak_mods {
-                                    mods.push(pak_mod);
+                            for pak_file_path in &pak_files_in_archive {
+                                let pak_name = pak_file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("Unknown").to_string();
+                                let _ = window.emit("install_log", format!("[Detection] Analyzing PAK: {}", pak_name));
+                                
+                                // Check for IoStore companions
+                                let utoc = pak_file_path.with_extension("utoc");
+                                let ucas = pak_file_path.with_extension("ucas");
+                                let is_ios = utoc.exists() && ucas.exists();
+                                
+                                let files_opt: Option<Vec<String>> = if is_ios {
+                                    use crate::utoc_utils::read_utoc;
+                                    let utoc_files: Vec<String> = read_utoc(&utoc).iter().map(|e| e.file_path.clone()).collect();
+                                    if utoc_files.is_empty() { None } else { Some(utoc_files) }
+                                } else if let Ok(file) = File::open(pak_file_path) {
+                                    if let Ok(aes_key) = AesKey::from_str("0C263D8C22DCB085894899C3A3796383E9BF9DE0CBFB08C9BF2DEF2E84F29D74") {
+                                        let mut reader = BufReader::new(file);
+                                        PakBuilder::new().key(aes_key.0).reader(&mut reader).ok().map(|pak| pak.files())
+                                    } else { None }
+                                } else { None };
+                                
+                                let mut pak_mod_type = "Archive".to_string();
+                                let mut pak_has_uassets = false;
+                                
+                                if let Some(files) = files_opt {
+                                    use crate::utils::get_pak_characteristics_detailed;
+                                    use crate::install_mod::contains_uasset_files;
+                                    let chars = get_pak_characteristics_detailed(files.clone());
+                                    pak_mod_type = chars.mod_type.clone();
+                                    pak_has_uassets = contains_uasset_files(&files);
                                 }
+                                
+                                let _ = window.emit("install_log", format!("[Detection] PAK {}: type={}, uassets={}", pak_name, pak_mod_type, pak_has_uassets));
+                                
+                                // Use original archive path - map_to_mods_internal will re-extract all PAKs
+                                // Standalone PAKs (not IoStore) need repak/IoStore conversion
+                                mods.push(InstallableModInfo {
+                                    mod_name: pak_name,
+                                    mod_type: pak_mod_type,
+                                    is_dir: false,
+                                    path: path_str.clone(),
+                                    auto_to_repak: !is_ios,
+                                    contains_uassets: pak_has_uassets,
+                                });
                             }
-                            
-                            return Ok(mods);
+                            continue;
                         }
                         
                         // Single PAK file or no PAK files - continue with existing logic
@@ -954,16 +965,15 @@ async fn parse_dropped_files(
                                         use crate::install_mod::contains_uasset_files;
                                         let has_uassets = contains_uasset_files(&files);
                                         
-                                        return Ok(vec![InstallableModInfo {
+                                        mods.push(InstallableModInfo {
                                             mod_name,
                                             mod_type,
                                             is_dir: false,
                                             path: path_str,
-                                            auto_fix_texture: has_texture,
-                                            auto_fix_serialize_size: false, // Mesh fixes are automatic
-                                            auto_to_repak: !is_iostore,  // Don't repak IoStore packages
+                                            auto_to_repak: !is_iostore,
                                             contains_uassets: has_uassets,
-                                        }]);
+                                        });
+                                        continue;
                             }
                         }
                         
@@ -1011,17 +1021,16 @@ async fn parse_dropped_files(
                                     use crate::install_mod::contains_uasset_files;
                                     let has_uassets = contains_uasset_files(&content_files);
                                     
-                                    // Return as a directory mod (will be converted to IoStore)
-                                    return Ok(vec![InstallableModInfo {
+                                    // Add as a directory mod (will be converted to IoStore)
+                                    mods.push(InstallableModInfo {
                                         mod_name,
                                         mod_type,
                                         is_dir: true,
                                         path: path_str,
-                                        auto_fix_texture: has_texture,
-                                        auto_fix_serialize_size: false, // Mesh fixes are automatic
                                         auto_to_repak: false,
                                         contains_uassets: has_uassets,
-                                    }]);
+                                    });
+                                    continue;
                                 }
                             }
                         }
@@ -1029,7 +1038,7 @@ async fn parse_dropped_files(
                 }
                 
                 // Fallback if extraction/analysis failed
-                ("Archive".to_string(), false, false, true) // Default to true for safety
+                ("Archive".to_string(), true) // Default to true for safety
             } else if ext == "pak" {
                 // Check if this is an IoStore package (has .utoc and .ucas companions)
                 let utoc_path = path.with_extension("utoc");
@@ -1158,9 +1167,7 @@ async fn parse_dropped_files(
                                 mod_type,
                                 is_dir: false,
                                 path: path_str,
-                                auto_fix_texture: has_texture,
-                                auto_fix_serialize_size: false, // Mesh fixes are automatic
-                                auto_to_repak: !is_iostore,  // Don't repak IoStore packages
+                                auto_to_repak: !is_iostore,
                                 contains_uassets: has_uassets,
                             });
                             continue; // Continue to next file instead of returning
@@ -1169,9 +1176,9 @@ async fn parse_dropped_files(
                     "PAK".to_string()
                 };
                 
-                (mod_type, false, false, true) // Default to true for safety
+                (mod_type, true) // Default to true for safety
             } else {
-                ("Unknown".to_string(), false, false, true) // Default to true for safety
+                ("Unknown".to_string(), true) // Default to true for safety
             }
         };
 
@@ -1185,8 +1192,6 @@ async fn parse_dropped_files(
             mod_type,
             is_dir: path.is_dir(),
             path: path_str,
-            auto_fix_texture,
-            auto_fix_serialize_size,
             auto_to_repak,
             contains_uassets,
         });
@@ -1198,12 +1203,10 @@ async fn parse_dropped_files(
 #[derive(serde::Deserialize)]
 struct ModToInstall {
     path: String,
+    #[serde(rename = "mod_name", default)]
+    mod_name: String,
     #[serde(rename = "customName")]
     custom_name: Option<String>,
-    #[serde(rename = "fixTexture")]
-    fix_texture: bool,
-    #[serde(rename = "fixSerializeSize")]
-    fix_serialize_size: bool,
     #[serde(rename = "toRepak")]
     to_repak: bool,
     #[serde(rename = "forceLegacy")]
@@ -1211,7 +1214,12 @@ struct ModToInstall {
     /// Subfolder within the mods directory to install into (empty = root)
     #[serde(rename = "installSubfolder", default)]
     install_subfolder: String,
+    /// Whether to include this mod in the installation (for multi-PAK selection)
+    #[serde(default = "default_true")]
+    enabled: bool,
 }
+
+fn default_true() -> bool { true }
 
 /// Helper function to copy an IoStore bundle (.utoc/.ucas and .pak or .bak_repak) and recompress if needed
 fn copy_iostore_with_compression_check(
@@ -1604,27 +1612,9 @@ async fn install_mods(
 
     let state_guard = state.lock().unwrap();
     let mod_directory = state_guard.game_path.clone();
-    let usmap_filename = state_guard.usmap_path.clone();
     let parallel_processing = state_guard.parallel_processing;
     let obfuscate = state_guard.obfuscate;
     drop(state_guard);
-
-    // Propagate USMAP path to UAssetTool via environment for UAssetAPI-based processing (from roaming folder)
-    if !usmap_filename.is_empty() {
-        if let Some(usmap_full_path) = get_usmap_full_path(&usmap_filename) {
-            std::env::set_var("USMAP_PATH", &usmap_full_path);
-            info!(
-                "Set USMAP_PATH for UAssetTool: {}",
-                usmap_full_path.display()
-            );
-        } else {
-            let expected_path = usmap_dir().join(&usmap_filename);
-            error!(
-                "USMAP file not found at expected path for UAssetTool: {}",
-                expected_path.display()
-            );
-        }
-    }
 
     if !mod_directory.exists() {
         std::fs::create_dir_all(&mod_directory)
@@ -1634,19 +1624,43 @@ async fn install_mods(
     // Convert paths to properly initialized InstallableMods
     use crate::install_mod::map_paths_to_mods;
 
-    let paths: Vec<PathBuf> = mods.iter().map(|m| PathBuf::from(&m.path)).collect();
+    // Deduplicate paths (multi-PAK archives send the same archive path multiple times)
+    let all_paths: Vec<PathBuf> = mods.iter().map(|m| PathBuf::from(&m.path)).collect();
+    let mut seen_paths = std::collections::HashSet::new();
+    let mut unique_paths: Vec<PathBuf> = Vec::new();
+    for p in &all_paths {
+        if seen_paths.insert(p.clone()) {
+            unique_paths.push(p.clone());
+        }
+    }
 
     // Log the paths we're trying to install
-    for p in &paths {
+    for p in &unique_paths {
         info!("[Install] Processing path: {}", p.display());
         let _ = window.emit("install_log", format!("[Install] Processing path: {}", p.display()));
     }
 
-    let mut installable_mods = map_paths_to_mods(&paths);
+    let mut installable_mods = map_paths_to_mods(&unique_paths);
+
+    // Filter out mods the user disabled in the frontend (multi-PAK selection)
+    // Build a set of enabled mod_names; only keep installable_mods that match
+    let enabled_names: std::collections::HashSet<String> = mods.iter()
+        .filter(|m| m.enabled)
+        .map(|m| m.mod_name.clone())
+        .collect();
+    let disabled_names: Vec<String> = mods.iter()
+        .filter(|m| !m.enabled)
+        .map(|m| m.mod_name.clone())
+        .collect();
+    if !disabled_names.is_empty() {
+        info!("[Install] User disabled {} mod(s): {:?}", disabled_names.len(), disabled_names);
+        let _ = window.emit("install_log", format!("[Install] Skipping {} disabled mod(s): {}", disabled_names.len(), disabled_names.join(", ")));
+        installable_mods.retain(|m| enabled_names.contains(&m.mod_name));
+    }
 
     // Check if we actually have mods to install
     if installable_mods.is_empty() {
-        error!("[Install] No valid mods found from {} input path(s)", paths.len());
+        error!("[Install] No valid mods found from {} input path(s)", unique_paths.len());
         let _ = window.emit("install_log", "ERROR: No valid mods found to install!");
         let _ = window.emit("install_log", "Possible causes:");
         let _ = window.emit("install_log", "  - PAK file couldn't be read (wrong AES key or corrupted)");
@@ -1657,9 +1671,41 @@ async fn install_mods(
         return Err(error_msg.to_string());
     }
 
-    // Apply user settings to each mod
-    for (idx, mod_to_install) in mods.iter().enumerate() {
-        if let Some(installable) = installable_mods.get_mut(idx) {
+    // Apply user settings to each installable mod
+    // Match by mod_name since archives expand to multiple mods with the same path
+    // Build a lookup map keyed by mod_name (unique per PAK even in multi-PAK archives)
+    crate::install_mod::write_install_debug(&format!("=== Building user_settings from {} frontend entries ===", mods.len()));
+    for (i, m) in mods.iter().enumerate() {
+        crate::install_mod::write_install_debug(&format!("  frontend[{}]: mod_name='{}', path='{}', to_repak={}", i, m.mod_name, m.path, m.to_repak));
+    }
+    let user_settings: std::collections::HashMap<String, &ModToInstall> = mods.iter()
+        .map(|m| {
+            // Use mod_name as primary key; fallback to path stem if mod_name is empty
+            let name = if !m.mod_name.is_empty() {
+                m.mod_name.clone()
+            } else {
+                PathBuf::from(&m.path).file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string()
+            };
+            (name, m)
+        })
+        .collect();
+    crate::install_mod::write_install_debug(&format!("  HashMap keys: {:?}", user_settings.keys().collect::<Vec<_>>()));
+
+    for installable in installable_mods.iter_mut() {
+        // Try to find matching user settings by mod name, then fallback to path match
+        crate::install_mod::write_install_debug(&format!("  Matching installable '{}' (repak={})...", installable.mod_name, installable.repak));
+        let by_name = user_settings.get(&installable.mod_name).copied();
+        let matched = by_name.or_else(|| {
+            mods.iter().find(|m| {
+                let m_path = PathBuf::from(&m.path);
+                m_path == installable.mod_path
+            })
+        });
+        
+        if let Some(mod_to_install) = matched {
             // Apply custom name if provided
             if let Some(ref custom) = mod_to_install.custom_name {
                 if !custom.is_empty() {
@@ -1667,18 +1713,22 @@ async fn install_mods(
                 }
             }
 
-            // Apply fix settings (mesh patching is handled automatically by UAssetTool)
-            installable.fix_textures = mod_to_install.fix_texture;
-            installable.fix_serialsize_header = mod_to_install.fix_serialize_size;
             installable.repak = mod_to_install.to_repak;
             installable.force_legacy_pak = mod_to_install.force_legacy;
             installable.install_subfolder = mod_to_install.install_subfolder.clone();
-            installable.usmap_path = usmap_filename.clone();
-            // Apply parallel processing setting from app state
-            installable.parallel_processing = parallel_processing;
-            // Apply obfuscation setting from app state
-            installable.obfuscate = obfuscate;
+        } else {
+            // No matching user settings found (common for archive-expanded mods)
+            // IMPORTANT: Do NOT override repak or force_legacy_pak here!
+            // These flags were already correctly set by find_mods_from_archive
+            // based on the actual PAK contents. Overriding them breaks IoStore conversion.
+            if let Some(first_mod) = mods.first() {
+                installable.install_subfolder = first_mod.install_subfolder.clone();
+                // repak and force_legacy_pak are intentionally NOT overridden
+            }
         }
+        
+        installable.parallel_processing = parallel_processing;
+        installable.obfuscate = obfuscate;
     }
 
     // Use existing installation logic
@@ -1701,8 +1751,6 @@ async fn install_mods(
             
             for (idx, imod) in installable_mods.iter().enumerate() {
                 window_for_logs.emit("install_log", format!("[{}/{}] Mod: {}", idx + 1, installable_mods.len(), imod.mod_name)).ok();
-                window_for_logs.emit("install_log", format!("  - Fix Textures: {}", imod.fix_textures)).ok();
-                window_for_logs.emit("install_log", format!("  - Fix SerializeSize: {}", imod.fix_serialsize_header)).ok();
                 window_for_logs.emit("install_log", format!("  - Repak: {}", imod.repak)).ok();
                 window_for_logs.emit("install_log", format!("  - Force Legacy PAK: {}", imod.force_legacy_pak)).ok();
             }
@@ -2030,16 +2078,8 @@ async fn update_mod(
     
     let state_guard = state.lock().unwrap();
     let mod_directory = state_guard.game_path.clone();
-    let usmap_filename = state_guard.usmap_path.clone();
     let obfuscate = state_guard.obfuscate;
     drop(state_guard);
-    
-    // Set USMAP path
-    if !usmap_filename.is_empty() {
-        if let Some(usmap_full_path) = get_usmap_full_path(&usmap_filename) {
-            std::env::set_var("USMAP_PATH", &usmap_full_path);
-        }
-    }
     
     let paths = vec![new_source.clone()];
     let mut installable_mods = map_paths_to_mods(&paths);
@@ -2054,7 +2094,6 @@ async fn update_mod(
     if let Some(installable) = installable_mods.get_mut(0) {
         installable.mod_name = mod_name.clone();
         installable.install_subfolder = install_subfolder.clone();
-        installable.usmap_path = usmap_filename;
         installable.obfuscate = obfuscate;
     }
     
@@ -2859,171 +2898,6 @@ async fn remove_custom_tag(
     Ok(())
 }
 
-/// Copy a USMAP file to the roaming folder, replacing any existing USMAP files.
-/// 
-/// # Arguments
-/// * `source_path` - Full path to the source .usmap file
-/// 
-/// # Returns
-/// The filename of the copied USMAP file (just the name, not full path)
-/// 
-/// # Behavior
-/// - Deletes ALL existing .usmap files in the roaming Usmap folder before copying
-/// - Copies the new file to `%APPDATA%/Repak-X/Usmap/`
-/// - Only one USMAP file should exist at a time
-#[tauri::command]
-async fn copy_usmap_to_folder(source_path: String) -> Result<String, String> {
-    let source = PathBuf::from(&source_path);
-    
-    if !source.exists() {
-        return Err("Source file does not exist".to_string());
-    }
-    
-    // Get the Usmap directory in roaming folder
-    let usmap_folder = usmap_dir();
-    std::fs::create_dir_all(&usmap_folder)
-        .map_err(|e| format!("Failed to create Usmap directory: {}", e))?;
-    
-    // Delete all existing .usmap files in the folder
-    if let Ok(entries) = std::fs::read_dir(&usmap_folder) {
-        for entry in entries.filter_map(|e| e.ok()) {
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) == Some("usmap") {
-                if let Err(e) = std::fs::remove_file(&path) {
-                    warn!("Failed to delete old USMAP file {:?}: {}", path, e);
-                } else {
-                    info!("Deleted old USMAP file: {:?}", path);
-                }
-            }
-        }
-    }
-    
-    // Get filename from source
-    let filename = source.file_name()
-        .ok_or("Invalid source filename")?
-        .to_str()
-        .ok_or("Invalid UTF-8 in filename")?;
-    
-    // Copy file to Usmap/ folder in roaming
-    let dest_path = usmap_folder.join(filename);
-    std::fs::copy(&source, &dest_path)
-        .map_err(|e| format!("Failed to copy file: {}", e))?;
-    
-    info!("Copied USmap file {} to {}", filename, usmap_folder.display());
-    
-    // Return just the filename
-    Ok(filename.to_string())
-}
-
-#[tauri::command]
-async fn set_usmap_path(usmap_path: String, state: State<'_, Arc<Mutex<AppState>>>) -> Result<(), String> {
-    let mut state = state.lock().unwrap();
-    state.usmap_path = usmap_path.clone();
-    info!("Set USMAP path in AppState: {}", usmap_path);
-    Ok(())
-}
-
-#[tauri::command]
-async fn get_usmap_path(state: State<'_, Arc<Mutex<AppState>>>) -> Result<String, String> {
-    let state = state.lock().unwrap();
-    Ok(state.usmap_path.clone())
-}
-
-/// Get the USMAP directory path in the roaming folder.
-/// 
-/// # Returns
-/// Full path to `%APPDATA%/Repak-X/Usmap/`
-#[tauri::command]
-async fn get_usmap_dir_path() -> Result<String, String> {
-    Ok(usmap_dir().to_string_lossy().to_string())
-}
-
-/// List all USMAP files currently in the roaming Usmap folder.
-/// Reads from filesystem at runtime, not from saved state.
-/// 
-/// # Returns
-/// Vector of filenames (not full paths) of .usmap files in the folder
-#[tauri::command]
-async fn list_usmap_files() -> Result<Vec<String>, String> {
-    let usmap_folder = usmap_dir();
-    
-    if !usmap_folder.exists() {
-        return Ok(Vec::new());
-    }
-    
-    let entries = std::fs::read_dir(&usmap_folder)
-        .map_err(|e| format!("Failed to read Usmap directory: {}", e))?;
-    
-    let mut files = Vec::new();
-    for entry in entries.filter_map(|e| e.ok()) {
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) == Some("usmap") {
-            if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
-                files.push(filename.to_string());
-            }
-        }
-    }
-    
-    Ok(files)
-}
-
-/// Get the currently active USMAP file by reading from filesystem.
-/// This reads the actual files in the Usmap folder, not the saved state.
-/// 
-/// # Returns
-/// - Filename of the first .usmap file found (there should only be one)
-/// - Empty string if no .usmap files exist
-#[tauri::command]
-async fn get_current_usmap_file() -> Result<String, String> {
-    let files = list_usmap_files().await?;
-    Ok(files.into_iter().next().unwrap_or_default())
-}
-
-/// Get the full path to the currently active USMAP file.
-/// 
-/// # Returns
-/// - Full path to the .usmap file if one exists
-/// - Empty string if no .usmap file exists
-#[tauri::command]
-async fn get_current_usmap_full_path() -> Result<String, String> {
-    let files = list_usmap_files().await?;
-    if let Some(filename) = files.into_iter().next() {
-        let full_path = usmap_dir().join(&filename);
-        Ok(full_path.to_string_lossy().to_string())
-    } else {
-        Ok(String::new())
-    }
-}
-
-/// Delete the currently active USMAP file from the roaming folder.
-/// 
-/// # Returns
-/// - `true` if a file was deleted
-/// - `false` if no file existed to delete
-#[tauri::command]
-async fn delete_current_usmap() -> Result<bool, String> {
-    let usmap_folder = usmap_dir();
-    
-    if !usmap_folder.exists() {
-        return Ok(false);
-    }
-    
-    let entries = std::fs::read_dir(&usmap_folder)
-        .map_err(|e| format!("Failed to read Usmap directory: {}", e))?;
-    
-    let mut deleted = false;
-    for entry in entries.filter_map(|e| e.ok()) {
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) == Some("usmap") {
-            std::fs::remove_file(&path)
-                .map_err(|e| format!("Failed to delete USMAP file: {}", e))?;
-            info!("Deleted USMAP file: {:?}", path);
-            deleted = true;
-        }
-    }
-    
-    Ok(deleted)
-}
 
 #[tauri::command]
 async fn get_all_tags(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<String>, String> {
@@ -3150,10 +3024,7 @@ async fn cleanup_ubulk_for_inline_textures(output_dir: &PathBuf) {
     // The batch_has_inline_texture_data function internally checks asset type
     match get_global_toolkit() {
         Ok(toolkit) => {
-            // Get USMAP path from environment
-            let usmap_path = std::env::var("USMAP_PATH").ok();
-            
-            match toolkit.batch_has_inline_texture_data(&uasset_files, usmap_path.as_deref()) {
+            match toolkit.batch_has_inline_texture_data(&uasset_files, None) {
                 Ok(inline_files) => {
                     log::info!("[Extraction] Found {} textures with inline data", inline_files.len());
                     
@@ -3195,18 +3066,7 @@ async fn cleanup_ubulk_for_inline_textures(output_dir: &PathBuf) {
 /// # Returns
 /// Number of files extracted
 #[tauri::command]
-async fn extract_mod_assets(mod_path: String, dest_path: String, window: Window, state: State<'_, Arc<Mutex<AppState>>>) -> Result<usize, String> {
-    // Set USMAP_PATH from AppState so UAssetTool can load mappings
-    {
-        let state_guard = state.lock().unwrap();
-        let usmap_filename = state_guard.usmap_path.clone();
-        drop(state_guard);
-        if !usmap_filename.is_empty() {
-            if let Some(usmap_full_path) = get_usmap_full_path(&usmap_filename) {
-                std::env::set_var("USMAP_PATH", &usmap_full_path);
-            }
-        }
-    }
+async fn extract_mod_assets(mod_path: String, dest_path: String, window: Window, _state: State<'_, Arc<Mutex<AppState>>>) -> Result<usize, String> {
     extract_mod_assets_inner(mod_path, dest_path, window).await
 }
 
@@ -5300,25 +5160,6 @@ fn app_dir() -> PathBuf {
         .join("Repak-X")
 }
 
-/// Directory for USMAP files - stored in roaming folder
-fn usmap_dir() -> PathBuf {
-    app_dir().join("Usmap")
-}
-
-/// Get the full path to a USMAP file by filename
-fn get_usmap_full_path(usmap_filename: &str) -> Option<PathBuf> {
-    if usmap_filename.is_empty() {
-        return None;
-    }
-    
-    let usmap_path = usmap_dir().join(usmap_filename);
-    if usmap_path.exists() {
-        Some(usmap_path)
-    } else {
-        None
-    }
-}
-
 /// Directory for log files - placed next to the executable for easy access
 fn log_dir() -> PathBuf {
     if let Ok(exe_path) = std::env::current_exe() {
@@ -5346,23 +5187,6 @@ fn load_state() -> AppState {
     } else {
         AppState::default()
     };
-    
-    // Auto-detect USMAP file from roaming folder on startup
-    // This ensures the app always uses whatever USMAP is actually in the folder
-    let usmap_folder = usmap_dir();
-    if usmap_folder.exists() {
-        if let Ok(entries) = std::fs::read_dir(&usmap_folder) {
-            for entry in entries.filter_map(|e| e.ok()) {
-                let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("usmap") {
-                    if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
-                        state.usmap_path = filename.to_string();
-                        break; // Use first .usmap file found
-                    }
-                }
-            }
-        }
-    }
     
     state
 }
@@ -6421,15 +6245,6 @@ fn main() {
             assign_mod_to_folder,
             add_custom_tag,
             remove_custom_tag,
-            // USMAP management commands
-            copy_usmap_to_folder,
-            set_usmap_path,
-            get_usmap_path,
-            get_usmap_dir_path,
-            list_usmap_files,
-            get_current_usmap_file,
-            get_current_usmap_full_path,
-            delete_current_usmap,
             get_all_tags,
             add_tag_to_catalog,
             delete_tag_from_all_mods,

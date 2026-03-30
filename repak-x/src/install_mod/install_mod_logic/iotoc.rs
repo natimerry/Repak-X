@@ -43,9 +43,8 @@ pub fn convert_to_iostore_directory(
     let mut paths = vec![];
     collect_files(&mut paths, &to_pak_dir)?;
 
-    // Note: SerializeSize fixing, Skeletal Mesh patching, and texture processing are all
+    // SerializeSize fixing, Skeletal Mesh patching, and texture processing are all
     // handled automatically by UAssetTool during IoStore conversion (ZenConverter.BuildExportMapWithRecalculatedSizes).
-    // The fix_textures and fix_serialsize_header flags are kept for backwards compatibility but are no-ops.
     let processed_textures: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // Filter out temporary/backup files that should NOT be included in the IoStore package
@@ -123,22 +122,6 @@ pub fn convert_to_iostore_directory(
     // This replaces retoc's action_to_zen function
     let output_base = mod_dir.join(&pak.mod_name);
     
-    // Get usmap path if available
-    let usmap_full_path = if !pak.usmap_path.is_empty() {
-        let usmap_dir = dirs::config_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("Repak-X")
-            .join("Usmap");
-        let usmap_file = usmap_dir.join(&pak.usmap_path);
-        if usmap_file.exists() {
-            Some(usmap_file.to_string_lossy().to_string())
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-    
     info!("Converting to IoStore using UAssetTool...");
     info!("  Input directory: {}", to_pak_dir.display());
     info!("  Output base: {}", output_base.display());
@@ -147,7 +130,6 @@ pub fn convert_to_iostore_directory(
     let result = uasset_toolkit::create_mod_iostore(
         &output_base.to_string_lossy(),
         &to_pak_dir.to_string_lossy(),
-        usmap_full_path.as_deref(),
         Some(&pak.mount_point),
         Some(true), // Enable compression
         None, // Use default AES key

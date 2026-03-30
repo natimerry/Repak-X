@@ -116,12 +116,6 @@ impl SyncToolkit {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::inherit()); // MUST inherit stderr to avoid deadlock from buffer filling
             
-            // Pass USMAP_PATH to child process
-            if let Ok(usmap_path) = std::env::var("USMAP_PATH") {
-                cmd.env("USMAP_PATH", &usmap_path);
-                log::info!("[SyncToolkit] Passing USMAP_PATH: {}", usmap_path);
-            }
-            
             #[cfg(windows)]
             cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
             
@@ -374,11 +368,10 @@ impl SyncToolkit {
         Ok(IoStoreListResult { package_count, container_name, files })
     }
     
-    pub fn create_mod_iostore(&self, output_path: &str, input_dir: &str, usmap_path: Option<&str>, mount_point: Option<&str>, compress: Option<bool>, aes_key: Option<&str>, parallel: bool, obfuscate: bool) -> Result<IoStoreResult> {
+    pub fn create_mod_iostore(&self, output_path: &str, input_dir: &str, mount_point: Option<&str>, compress: Option<bool>, aes_key: Option<&str>, parallel: bool, obfuscate: bool) -> Result<IoStoreResult> {
         let request = UAssetRequest::CreateModIoStore {
             output_path: output_path.to_string(),
             input_dir: input_dir.to_string(),
-            usmap_path: usmap_path.map(|s| s.to_string()),
             mount_point: mount_point.map(|s| s.to_string()),
             compress,
             aes_key: aes_key.map(|s| s.to_string()),
@@ -502,7 +495,7 @@ pub enum UAssetRequest {
     #[serde(rename = "extract_script_objects")]
     ExtractScriptObjects { file_path: String, output_path: String },
     #[serde(rename = "create_mod_iostore")]
-    CreateModIoStore { output_path: String, input_dir: String, usmap_path: Option<String>, mount_point: Option<String>, compress: Option<bool>, aes_key: Option<String>, #[serde(default)] parallel: bool, #[serde(default)] obfuscate: bool },
+    CreateModIoStore { output_path: String, input_dir: String, mount_point: Option<String>, compress: Option<bool>, aes_key: Option<String>, #[serde(default)] parallel: bool, #[serde(default)] obfuscate: bool },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -658,7 +651,6 @@ pub struct IoStoreResult {
 pub fn create_mod_iostore(
     output_path: &str,
     input_dir: &str,
-    usmap_path: Option<&str>,
     mount_point: Option<&str>,
     compress: Option<bool>,
     aes_key: Option<&str>,
@@ -666,7 +658,7 @@ pub fn create_mod_iostore(
     obfuscate: bool,
 ) -> Result<IoStoreResult> {
     let toolkit = get_global_toolkit()?;
-    toolkit.create_mod_iostore(output_path, input_dir, usmap_path, mount_point, compress, aes_key, parallel, obfuscate)
+    toolkit.create_mod_iostore(output_path, input_dir, mount_point, compress, aes_key, parallel, obfuscate)
 }
 
 /// Patch mesh materials
