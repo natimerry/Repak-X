@@ -24,7 +24,6 @@ const ACCENT_COLORS = {
 };
 
 type SettingsPayload = {
-  globalUsmap: string;
   hideSuffix: boolean;
   autoOpenDetails: boolean;
   showHeroIcons: boolean;
@@ -85,7 +84,6 @@ export default function SettingsPanel({ settings, onSave, onClose, theme, setThe
 
   const handleSave = () => {
     onSave({
-      globalUsmap: settings.globalUsmap || '',
       hideSuffix,
       autoOpenDetails,
       showHeroIcons,

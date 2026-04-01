@@ -2043,6 +2043,46 @@ input[type="text"]:focus {
   margin-bottom: 0.25rem;
 }
 
+/* ==================== April Fools - Comic Sans Mode ==================== */
+.app.april-fools,
+.app.april-fools * {
+  font-family: 'Comic Sans MS', 'Comic Sans', 'Chalkboard SE', cursive !important;
+}
+
+.app.april-fools .dropzone-card h2 {
+  background: linear-gradient(90deg, #ff0000, #ff7700, #ffff00, #00ff00, #0000ff, #8b00ff, #ff0000);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: rainbow-scroll 3s linear infinite;
+}
+
+@keyframes rainbow-scroll {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+.app.april-fools .aurora-text,
+.app.april-fools .aurora-text.aurora-text--accent {
+  background: linear-gradient(to right, #ff0000, #ff7700, #ffff00, #00ff00, #0000ff, #8b00ff, #ff0000);
+  background-size: 200% auto;
+  color: transparent;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: rainbow-scroll 3s linear infinite;
+}
+
+.app.april-fools .dropzone-card p {
+  font-style: italic;
+}
+
+.app.april-fools .zone-hint {
+  background: linear-gradient(135deg, #ff69b4, #00bfff);
+  color: #fff;
+  font-weight: 700;
+}
+
 /* Global Modal Styles */
 .modal-overlay {
   position: fixed;

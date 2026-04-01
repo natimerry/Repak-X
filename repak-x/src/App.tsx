@@ -48,6 +48,7 @@ import PromiseTransitionLoader from './components/PromiseTransitionLoader'
 import { AuroraText } from './components/ui/AuroraText'
 import { AlertProvider, useAlert } from './components/AlertHandler'
 import { useGlobalTooltips } from './hooks/useGlobalTooltips'
+import { useAprilFools } from './hooks/useAprilFools'
 import Switch from './components/ui/Switch'
 import NumberInput from './components/ui/NumberInput'
 import characterDataStatic from './data/character_data.json'
@@ -185,7 +186,6 @@ type InstallModPayload = ModRecord & {
 }
 
 type AppSettings = {
-  globalUsmap: string
   hideSuffix: boolean
   autoOpenDetails: boolean
   showHeroIcons: boolean
@@ -200,7 +200,7 @@ type AppSettings = {
 }
 
 function App() {
-  const [globalUsmap, setGlobalUsmap] = useState('');
+  const isAprilFools = useAprilFools();
   const [hideSuffix, setHideSuffix] = useState(false);
   const [autoOpenDetails, setAutoOpenDetails] = useState(false);
   const [showHeroIcons, setShowHeroIcons] = useState(false);
@@ -1359,14 +1359,6 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
         console.error('Failed to fetch character data:', charErr)
       }
 
-      // Fetch stored USMAP path
-      try {
-        const usmapPath = await invoke('get_usmap_path') as any
-        setGlobalUsmap(usmapPath)
-      } catch (err) {
-        console.error('Failed to fetch usmap path:', err)
-      }
-
       await loadMods()
       await loadFolders()
       await checkGame()
@@ -1637,8 +1629,6 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
         file_size: Math.floor(Math.random() * 1024 * 1024 * 50),
         mod_type: modType,
         auto_fix_mesh: Math.random() > 0.5,
-        auto_fix_texture: Math.random() > 0.5,
-        auto_fix_serialize_size: Math.random() > 0.5,
         auto_to_repak: Math.random() > 0.5
       }
     }
@@ -2562,7 +2552,6 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
   }
 
   const handleSaveSettings = async (settings: AppSettings) => {
-    setGlobalUsmap(settings.globalUsmap)
     setHideSuffix(settings.hideSuffix)
     setAutoOpenDetails(settings.autoOpenDetails)
     setShowHeroIcons(settings.showHeroIcons)
@@ -2734,7 +2723,7 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
   }, []);
 
   return (
-    <div className="app">
+    <div className={`app${isAprilFools ? ' april-fools' : ''}`}>
       <TitleBar />
       {panels.install && (
         <InstallModPanel
@@ -2762,7 +2751,7 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
 
       {panels.settings && (
         <SettingsPanel
-          settings={{ globalUsmap, hideSuffix, autoOpenDetails, showHeroIcons, showHeroBg, showModType, showExperimental, enableDrp, parallelProcessing, autoCheckUpdates, holdToDelete, showSubfolderMods }}
+          settings={{ hideSuffix, autoOpenDetails, showHeroIcons, showHeroBg, showModType, showExperimental, enableDrp, parallelProcessing, autoCheckUpdates, holdToDelete, showSubfolderMods }}
           onSave={handleSaveSettings}
           onClose={() => setPanel('settings', false)}
           theme={theme}
@@ -2811,6 +2800,7 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
       <DropZoneOverlay
         isVisible={isDragging}
         folders={folders}
+        isAprilFools={isAprilFools}
         onInstallDrop={() => {
           // Just signals intent - actual files come from Tauri event
           setDropTargetFolder(null)
@@ -2835,6 +2825,7 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
         onInstall={handleExtensionModInstall}
         onCancel={() => setExtensionModPath(null)}
         onCreateFolder={handleCreateFolderAndReturn}
+        onNewFolder={(callback) => setNewFolderFromInstall({ callback })}
       />
 
       {/* Quick Organize Overlay - for PAK files with no uassets */}

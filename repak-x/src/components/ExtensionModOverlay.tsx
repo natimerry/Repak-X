@@ -26,6 +26,7 @@ type ExtensionModOverlayProps = {
     onInstall: (folderId: string | null) => Promise<void>;
     onCancel: () => void;
     onCreateFolder?: (name: string) => Promise<string | null>;
+    onNewFolder?: (callback: (name: string) => void) => void;
 };
 
 // Simplified folder tree for the overlay (reusing logic from DropZoneOverlay)
@@ -127,7 +128,8 @@ const ExtensionModOverlay = ({
     folders = [],
     onInstall,
     onCancel,
-    onCreateFolder
+    onCreateFolder,
+    onNewFolder
 }: ExtensionModOverlayProps) => {
     const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
     const [isInstalling, setIsInstalling] = useState(false);
@@ -176,22 +178,24 @@ const ExtensionModOverlay = ({
         }
     };
 
-    const handleNewFolder = async () => {
-        const name = prompt('Enter new folder name:');
-        if (!name || !name.trim()) return;
-
-        setIsCreatingFolder(true);
-        try {
-            if (onCreateFolder) {
-                const newFolderId = await onCreateFolder(name.trim());
-                if (newFolderId) {
-                    setSelectedFolderId(newFolderId);
+    const handleNewFolder = () => {
+        if (onNewFolder) {
+            onNewFolder(async (name) => {
+                if (!name || !name.trim()) return;
+                setIsCreatingFolder(true);
+                try {
+                    if (onCreateFolder) {
+                        const newFolderId = await onCreateFolder(name.trim());
+                        if (newFolderId) {
+                            setSelectedFolderId(newFolderId);
+                        }
+                    }
+                } catch (err) {
+                    console.error('Failed to create folder:', err);
+                } finally {
+                    setIsCreatingFolder(false);
                 }
-            }
-        } catch (err) {
-            console.error('Failed to create folder:', err);
-        } finally {
-            setIsCreatingFolder(false);
+            });
         }
     };
 

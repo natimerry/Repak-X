@@ -6,7 +6,7 @@ import { IoLogoGithub } from 'react-icons/io';
 import { open } from '@tauri-apps/plugin-shell';
 import { AuroraText } from './ui/AuroraText';
 import ModularLogo from './ui/ModularLogo';
-import mrmLogo from '../assets/extra/mrm_logo.png';
+import mrmLogo from '../assets/extra/mrm_logo.webp';
 import './CreditsPanel.css';
 
 type Contributor = {

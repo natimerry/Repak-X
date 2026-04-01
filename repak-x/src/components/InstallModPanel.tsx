@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { motion } from 'framer-motion'
 import Switch from './ui/Switch'
+import Checkbox from './ui/Checkbox'
 import { FaTag } from "react-icons/fa6"
 import { VscFolder, VscFolderOpened, VscChevronRight, VscChevronDown, VscNewFolder } from 'react-icons/vsc'
 import { MdCreateNewFolder } from 'react-icons/md'
@@ -23,19 +24,16 @@ type ModInput = {
   is_dir?: boolean
   contains_uassets?: boolean
   auto_to_repak?: boolean
-  auto_fix_texture?: boolean
-  auto_fix_serialize_size?: boolean
   auto_force_legacy?: boolean
   [key: string]: any
 }
 
 type ModSetting = {
-  fixTexture: boolean
-  fixSerializeSize: boolean
+  enabled: boolean
+  obfuscate: boolean
   toRepak: boolean
   forceLegacy: boolean
   compression: string
-  usmapPath: string
   customName: string
   selectedTags: string[]
   installSubfolder: string | null
@@ -163,12 +161,7 @@ const FolderNode = ({ node, selectedFolderId, onSelect, depth = 0 }: FolderNodeP
   )
 }
 
-const hasCookedAssets = (mod: any = {}) => {
-  if (!mod?.is_dir) return false
-  return Boolean(mod.auto_fix_texture || mod.auto_fix_serialize_size)
-}
-
-const isRepakLocked = (mod: any = {}) => mod.is_dir || hasCookedAssets(mod)
+const isRepakLocked = (mod: any = {}) => mod.is_dir
 
 const buildInitialSettings = (mods: ModInput[] = []): Record<number, ModSetting> => {
   return mods.reduce((acc, mod, idx) => {
@@ -180,12 +173,11 @@ const buildInitialSettings = (mods: ModInput[] = []): Record<number, ModSetting>
     const effectiveToRepak = !canApplyPatches ? false : (locked ? false : defaultToRepak)
 
     acc[idx] = {
-      fixTexture: canApplyPatches ? (mod.auto_fix_texture || false) : false,
-      fixSerializeSize: canApplyPatches ? (mod.auto_fix_serialize_size || false) : false,
+      enabled: true,
+      obfuscate: false,
       toRepak: effectiveToRepak,
       forceLegacy: mod.contains_uassets === false ? true : (mod.auto_force_legacy || false),
       compression: 'Oodle',
-      usmapPath: '',
       customName: '',
       selectedTags: [],
       installSubfolder: null // Per-mod install destination
@@ -225,7 +217,6 @@ export default function InstallModPanel({ mods, allTags, folders = [], onCreateT
   const [modSettings, setModSettings] = useState<Record<number, ModSetting>>(() => buildInitialSettings(mods))
   // Removed global selectedFolderId since we now track it per-mod in modSettings
   const [isCreatingFolder, setIsCreatingFolder] = useState(false)
-  const [obfuscate, setObfuscate] = useState(false)
 
   // Folder tree data
   const rootFolder = useMemo(() => folders.find(f => f.is_root), [folders])
@@ -234,10 +225,6 @@ export default function InstallModPanel({ mods, allTags, folders = [], onCreateT
     const root = buildTree(subfolders)
     return convertToArray(root)
   }, [subfolders])
-
-  useEffect(() => {
-    invoke('get_obfuscate').then((val) => setObfuscate(val as boolean)).catch(() => {})
-  }, [])
 
   useEffect(() => {
     console.log('[InstallModPanel] Received mods:', mods.length, mods)
@@ -253,27 +240,6 @@ export default function InstallModPanel({ mods, allTags, folders = [], onCreateT
   const updateModSetting = (idx: number, key: keyof ModSetting, value: any) => {
     if (key === 'toRepak' && isRepakLocked(mods[idx])) {
       return
-    }
-
-    // When enabling forceLegacy, clear all patch toggles
-    if (key === 'forceLegacy' && value === true) {
-      setModSettings(prev => ({
-        ...prev,
-        [idx]: {
-          ...prev[idx],
-          [key]: value,
-          fixTexture: false,
-          fixSerializeSize: false
-        }
-      }))
-      return
-    }
-
-    // Prevent enabling patch toggles when in legacy mode or no uassets
-    if (['fixTexture', 'fixSerializeSize'].includes(key)) {
-      if (modSettings[idx]?.forceLegacy || mods[idx]?.contains_uassets === false) {
-        return
-      }
     }
 
     setModSettings(prev => ({
@@ -295,15 +261,20 @@ export default function InstallModPanel({ mods, allTags, folders = [], onCreateT
     updateModSetting(idx, 'selectedTags', currentTags.filter(t => t !== tagToRemove))
   }
 
+  const enabledCount = useMemo(() => {
+    return mods.filter((_, idx) => modSettings[idx]?.enabled !== false).length
+  }, [mods, modSettings])
+
   const handleInstall = () => {
-    // Prepare mods with their settings
-    const modsToInstall = mods.map((mod, idx) => ({
-      ...mod,
-      ...modSettings[idx],
-      toRepak: isRepakLocked(mod) ? false : (modSettings[idx]?.toRepak || false),
-      forceLegacy: modSettings[idx]?.forceLegacy || false,
-      installSubfolder: modSettings[idx]?.installSubfolder || ''
-    }))
+    const modsToInstall = mods
+      .map((mod, idx) => ({
+        ...mod,
+        ...modSettings[idx],
+        toRepak: isRepakLocked(mod) ? false : (modSettings[idx]?.toRepak || false),
+        forceLegacy: modSettings[idx]?.forceLegacy || false,
+        installSubfolder: modSettings[idx]?.installSubfolder || ''
+      }))
+      .filter(m => m.enabled !== false)
     onInstall(modsToInstall)
   }
 
@@ -355,10 +326,18 @@ export default function InstallModPanel({ mods, allTags, folders = [], onCreateT
                 const { character, category, additional } = parseModType(mod.mod_type)
                 const modLabel = mod.is_dir ? 'Folder Drop' : 'PAK File'
                 return (
-                  <div className="install-mod-card" key={mod.path || idx}>
+                  <div className={`install-mod-card ${modSettings[idx]?.enabled === false ? 'disabled' : ''}`} key={mod.path || idx}>
                     {/* Left: Mod Options */}
                     <div className="install-mod-card__left">
                       <div className="install-mod-card__header">
+                        {mods.length > 1 && (
+                          <Checkbox
+                            checked={modSettings[idx]?.enabled !== false}
+                            onChange={(checked) => updateModSetting(idx, 'enabled', checked)}
+                            size="md"
+                            color="primary"
+                          />
+                        )}
                         <div className="install-mod-card__title">
                           <label className="field-label">Custom Name</label>
                           <div className="mod-name-input-wrapper">
@@ -488,22 +467,15 @@ export default function InstallModPanel({ mods, allTags, folders = [], onCreateT
                         <Switch
                           size="md"
                           color="primary"
-                          checked={obfuscate}
-                          onChange={async (value) => {
-                            try {
-                              await invoke('set_obfuscate', { enabled: value })
-                              setObfuscate(value)
-                            } catch (e) {
-                              console.error('Failed to set obfuscation:', e)
-                            }
-                          }}
-                          className={`install-toggle obfuscate-toggle ${obfuscate ? 'active' : ''}`}
+                          checked={modSettings[idx]?.obfuscate || false}
+                          onChange={(value) => updateModSetting(idx, 'obfuscate', value)}
+                          className={`install-toggle obfuscate-toggle ${modSettings[idx]?.obfuscate ? 'active' : ''}`}
                           title="Encrypts IoStore with game's AES key to block FModel extraction"
                         >
                           <div className="install-toggle__text">
                             <span className="install-toggle__label">Obfuscation</span>
                             <span className="install-toggle__hint">
-                              {obfuscate ? 'IOStore will be AES encrypted' : 'Encrypt mod to block Fmodel extraction'}
+                              {modSettings[idx]?.obfuscate ? 'IOStore will be AES encrypted' : 'Encrypt mod to block Fmodel extraction'}
                             </span>
                           </div>
                         </Switch>
@@ -610,8 +582,8 @@ export default function InstallModPanel({ mods, allTags, folders = [], onCreateT
           <button onClick={onCancel} className="btn-cancel">
             Cancel
           </button>
-          <button onClick={handleInstall} className="btn-install">
-            Install {mods.length} Mod(s)
+          <button onClick={handleInstall} className="btn-install" disabled={enabledCount === 0}>
+            Install {enabledCount} Mod(s)
           </button>
         </div>
       </motion.div>
