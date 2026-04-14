@@ -35,6 +35,7 @@ type SettingsPayload = {
   enableDrp: boolean;
   holdToDelete: boolean;
   showSubfolderMods: boolean;
+  bypassGameRunningLock: boolean;
 };
 
 type SettingsPanelProps = {
@@ -70,6 +71,7 @@ export default function SettingsPanel({ settings, onSave, onClose, theme, setThe
   const [parallelProcessing, setLocalParallelProcessing] = useState(settings.parallelProcessing || false);
   const [holdToDelete, setHoldToDelete] = useState(settings.holdToDelete !== false);
   const [showSubfolderMods, setShowSubfolderMods] = useState(settings.showSubfolderMods !== false);
+  const [bypassGameRunningLock, setBypassGameRunningLock] = useState(settings.bypassGameRunningLock || false);
   const [enableDrp, setEnableDrp] = useState(settings.enableDrp !== false);
   const [showRatMode, setShowRatMode] = useState(false);
 
@@ -94,7 +96,8 @@ export default function SettingsPanel({ settings, onSave, onClose, theme, setThe
       parallelProcessing,
       enableDrp,
       holdToDelete,
-      showSubfolderMods
+      showSubfolderMods,
+      bypassGameRunningLock
     });
     alert.success('Settings Saved', 'Your preferences have been updated.');
     onClose();
@@ -106,6 +109,18 @@ export default function SettingsPanel({ settings, onSave, onClose, theme, setThe
       setEnableDrp(settings.enableDrp);
     }
   }, [settings.enableDrp]);
+
+  useEffect(() => {
+    setHoldToDelete(settings.holdToDelete !== false);
+  }, [settings.holdToDelete]);
+
+  useEffect(() => {
+    setShowSubfolderMods(settings.showSubfolderMods !== false);
+  }, [settings.showSubfolderMods]);
+
+  useEffect(() => {
+    setBypassGameRunningLock(settings.bypassGameRunningLock || false);
+  }, [settings.bypassGameRunningLock]);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -251,6 +266,12 @@ export default function SettingsPanel({ settings, onSave, onClose, theme, setThe
                   <span style={{ paddingLeft: '4px', fontWeight: 'normal', opacity: 0.9 }}>Enables "Compact List" view</span>
                 </Checkbox>
               </div>
+            </div>
+          </div>
+
+          <div className="setting-section">
+            <h3>Advanced UI Settings</h3>
+            <div className="setting-group">
               <div>
                 <Checkbox
                   checked={holdToDelete}
@@ -260,8 +281,21 @@ export default function SettingsPanel({ settings, onSave, onClose, theme, setThe
                 </Checkbox>
                 <p style={{ fontSize: '0.9rem', opacity: 0.6, marginLeft: '28px', marginTop: '0.15rem', color: !holdToDelete ? '#ff5252' : undefined }}>
                   {!holdToDelete
-                    ? '⚠ Deleting mods is irreversible. Mods will be removed instantly on click.'
+                    ? 'Deleting mods is irreversible. Mods will be removed instantly on click.'
                     : 'Hold the delete button for 2 seconds to confirm deletion.'}
+                </p>
+              </div>
+              <div>
+                <Checkbox
+                  checked={bypassGameRunningLock}
+                  onChange={(checked: boolean) => setBypassGameRunningLock(checked)}
+                >
+                  <span style={{ paddingLeft: '4px', fontWeight: 'normal', opacity: 0.9 }}>Bypass game-running operation lock</span>
+                </Checkbox>
+                <p style={{ fontSize: '0.9rem', opacity: 0.6, marginLeft: '28px', marginTop: '0.15rem', color: bypassGameRunningLock ? '#ffb74d' : undefined }}>
+                  {bypassGameRunningLock
+                    ? 'Warning: Rename, move, toggle, delete, and priority actions will stay enabled while the game is running.'
+                    : 'When disabled, mod operations are blocked while the game is running.'}
                 </p>
               </div>
             </div>

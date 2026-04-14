@@ -19,6 +19,7 @@ mod p2p_protocol;
 mod ip_obfuscation;
 mod toast_events;
 mod discord_presence;
+mod vfx_updater;
 
 use uasset_detection::detect_texture_files_async;
 use log::{info, warn, error};
@@ -6527,7 +6528,30 @@ fn main() {
             get_parallel_processing,
             // Obfuscation
             set_obfuscate,
-            get_obfuscate
+            get_obfuscate,
+            // VFX Updater commands
+            vfx_updater::vfx_start_session,
+            vfx_updater::vfx_stop_session,
+            vfx_updater::vfx_extract_mod_assets,
+            vfx_updater::vfx_convert_uassets_to_json,
+            vfx_updater::vfx_extract_vanilla_assets,
+            vfx_updater::vfx_convert_json_to_uassets,
+            vfx_updater::vfx_pack_to_iostore,
+            vfx_updater::vfx_detect_asset_class,
+            vfx_updater::vfx_get_temp_dir,
+            vfx_updater::vfx_create_step_directory,
+            vfx_updater::vfx_create_pipeline_directories,
+            vfx_updater::vfx_cleanup_temp_directories,
+            vfx_updater::vfx_cleanup_pipeline,
+            vfx_updater::vfx_get_uasset_tool_path,
+            vfx_updater::vfx_get_asset_classes,
+            vfx_updater::vfx_is_updatable_class,
+            vfx_updater::vfx_copy_uasset_files,
+            vfx_updater::vfx_read_json_file,
+            vfx_updater::vfx_write_json_file,
+            vfx_updater::vfx_list_json_files,
+            vfx_updater::vfx_get_settings,
+            vfx_updater::vfx_save_settings
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

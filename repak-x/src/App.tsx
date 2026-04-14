@@ -197,6 +197,7 @@ type AppSettings = {
   autoCheckUpdates: boolean
   holdToDelete: boolean
   showSubfolderMods: boolean
+  bypassGameRunningLock: boolean
 }
 
 function App() {
@@ -207,12 +208,13 @@ function App() {
   const [showHeroBg, setShowHeroBg] = useState(false);
   const [showModType, setShowModType] = useState(false);
   const [showExperimental, setShowExperimental] = useState(false);
-const [showSubfolderMods, setShowSubfolderMods] = useState(true);
+  const [showSubfolderMods, setShowSubfolderMods] = useState(true);
   const [autoCheckUpdates, setAutoCheckUpdates] = useState(true);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [enableDrp, setEnableDrp] = useState(false);
   const [parallelProcessing, setParallelProcessing] = useState(false);
   const [holdToDelete, setHoldToDelete] = useState(true);
+  const [bypassGameRunningLock, setBypassGameRunningLock] = useState(false);
   const [theme, setTheme] = useState('dark');
   const [accentColor, setAccentColor] = useState('#4a9eff');
 
@@ -682,7 +684,7 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
   }
 
   const handleSetPriority = async (modPath: string, priority: number) => {
-    if (gameRunning) {
+    if (gameRunning && !bypassGameRunningLock) {
       alert.warning(
         'Game Running',
         'Cannot change priority while game is running.'
@@ -844,8 +846,8 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
   }
 
   const handleBulkToggle = async (enable: boolean) => {
-    if (selectedMods.size === 0 || gameRunning) {
-      if (gameRunning) alert.warning('Game Running', 'Cannot toggle mods while game is running.')
+    if (selectedMods.size === 0 || (gameRunning && !bypassGameRunningLock)) {
+      if (gameRunning && !bypassGameRunningLock) alert.warning('Game Running', 'Cannot toggle mods while game is running.')
       return
     }
     const targetMods = mods.filter(m => selectedMods.has(m.path) && m.enabled !== enable)
@@ -1638,7 +1640,7 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
   }
 
   const handleDeleteMod = async (modPath: string) => {
-    if (gameRunning) {
+    if (gameRunning && !bypassGameRunningLock) {
       alert.warning(
         'Game Running',
         'Cannot delete mods while game is running.'
@@ -1665,7 +1667,7 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
   }
 
   const handleToggleMod = async (modPath: string) => {
-    if (gameRunning) {
+    if (gameRunning && !bypassGameRunningLock) {
       alert.warning(
         'Game Running',
         'Cannot toggle mods while game is running.'
@@ -1877,7 +1879,7 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
   }
 
   const handleAssignToFolder = async (folderId: string | null) => {
-    if (gameRunning) {
+    if (gameRunning && !bypassGameRunningLock) {
       alert.warning(
         'Game Running',
         'Cannot move mods while game is running.'
@@ -1912,7 +1914,7 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
   }
 
   const handleMoveSingleMod = async (modPath: string, folderId: string | null) => {
-    if (gameRunning) {
+    if (gameRunning && !bypassGameRunningLock) {
       alert.warning(
         'Game Running',
         'Cannot move mods while game is running.'
@@ -2012,7 +2014,7 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
 
   // Rename a mod (calls backend to rename actual file)
   const handleRenameMod = async (modPath: string, newName: string) => {
-    if (gameRunning) {
+    if (gameRunning && !bypassGameRunningLock) {
       alert.warning(
         'Game Running',
         'Cannot rename mods while game is running.'
@@ -2340,7 +2342,7 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
       // F2 - Rename mod
       else if (key === 'f2' && selectedMod) {
         e.preventDefault()
-        if (gameRunning) {
+        if (gameRunning && !bypassGameRunningLock) {
           alert.warning(
             'Game Running',
             'Cannot rename mods while game is running.'
@@ -2560,6 +2562,7 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
     setShowExperimental(settings.showExperimental)
     setAutoCheckUpdates(settings.autoCheckUpdates)
     setEnableDrp(settings.enableDrp)
+    setBypassGameRunningLock(settings.bypassGameRunningLock)
 
     // Handle DRP toggle
     if (settings.enableDrp && !enableDrp) {
@@ -2591,6 +2594,16 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
     localStorage.setItem('parallelProcessing', JSON.stringify(settings.parallelProcessing || false))
     localStorage.setItem('holdToDelete', JSON.stringify(settings.holdToDelete !== false))
     localStorage.setItem('showSubfolderMods', JSON.stringify(settings.showSubfolderMods !== false))
+    localStorage.setItem('bypassGameRunningLock', JSON.stringify(settings.bypassGameRunningLock || false))
+    console.debug('[Settings] Saved holdToDelete preference', {
+      requestedHoldToDelete: settings.holdToDelete,
+      normalizedHoldToDelete: settings.holdToDelete !== false,
+      persistedHoldToDeleteRaw: localStorage.getItem('holdToDelete')
+    })
+    console.debug('[Settings] Saved bypassGameRunningLock preference', {
+      bypassGameRunningLock: settings.bypassGameRunningLock,
+      persistedBypassGameRunningLockRaw: localStorage.getItem('bypassGameRunningLock')
+    })
 
     // Apply hold to delete setting
     setHoldToDelete(settings.holdToDelete !== false)
@@ -2633,9 +2646,15 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
     const savedParallelProcessing = JSON.parse(localStorage.getItem('parallelProcessing') || 'false');
     const savedHoldToDelete = JSON.parse(localStorage.getItem('holdToDelete') ?? 'true');
     const savedShowSubfolderMods = JSON.parse(localStorage.getItem('showSubfolderMods') ?? 'true');
-
+    const savedBypassGameRunningLock = JSON.parse(localStorage.getItem('bypassGameRunningLock') || 'false');
     handleThemeChange(savedTheme);
     handleAccentChange(savedAccent);
+    console.debug('[Settings] Startup preferences snapshot', {
+      holdToDeleteRaw: localStorage.getItem('holdToDelete'),
+      holdToDeleteNormalized: savedHoldToDelete,
+      bypassGameRunningLockRaw: localStorage.getItem('bypassGameRunningLock'),
+      bypassGameRunningLockNormalized: savedBypassGameRunningLock,
+    })
     const parsedViewMode: ViewMode =
       savedViewMode === 'grid' || savedViewMode === 'compact' || savedViewMode === 'list-compact'
         ? savedViewMode
@@ -2652,6 +2671,7 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
     setParallelProcessing(savedParallelProcessing);
     setHoldToDelete(savedHoldToDelete);
     setShowSubfolderMods(savedShowSubfolderMods);
+    setBypassGameRunningLock(savedBypassGameRunningLock);
 
     if (savedAutoCheckUpdates) {
       console.debug('[Updates] Running startup auto-check for updates');
@@ -2751,7 +2771,7 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
 
       {panels.settings && (
         <SettingsPanel
-          settings={{ hideSuffix, autoOpenDetails, showHeroIcons, showHeroBg, showModType, showExperimental, enableDrp, parallelProcessing, autoCheckUpdates, holdToDelete, showSubfolderMods }}
+          settings={{ hideSuffix, autoOpenDetails, showHeroIcons, showHeroBg, showModType, showExperimental, enableDrp, parallelProcessing, autoCheckUpdates, holdToDelete, showSubfolderMods, bypassGameRunningLock }}
           onSave={handleSaveSettings}
           onClose={() => setPanel('settings', false)}
           theme={theme}
@@ -2954,6 +2974,37 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
           </div>
         </div>
         <div className="header-actions-right">
+          {/* VFX Updater Button */}
+          <button
+            className="btn-settings btn-vfx"
+            title="Open Repak VFX Updater"
+            onClick={async () => {
+              try {
+                const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
+                const existing = await WebviewWindow.getByLabel('vfx-updater')
+                if (existing) {
+                  await existing.setFocus()
+                  return
+                }
+                const vfxWindow = new WebviewWindow('vfx-updater', {
+                  url: '/vfx-updater',
+                  title: 'Repak VFX Updater',
+                  width: 650,
+                  height: 750,
+                  center: true,
+                  resizable: false,
+                  decorations: false,
+                })
+                vfxWindow.once('tauri://error', (e) => {
+                  console.error('[VFX] Failed to create window:', e)
+                })
+              } catch (e) {
+                console.error('[VFX] Window error:', e)
+              }
+            }}
+          >
+            <span>VFX Updater</span>
+          </button>
           <button
             className="btn-settings"
             data-tour="launch-btn"
@@ -3400,7 +3451,7 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
                 renamingModPath={renamingModPath}
                 onClearRenaming={() => setRenamingModPath(null)}
                 gridRef={modsGridRef}
-                gameRunning={gameRunning}
+                gameRunning={gameRunning && !bypassGameRunningLock}
                 holdToDelete={holdToDelete}
                 onRenameBlocked={() => alert.warning(
                   'Game Running',
@@ -3487,7 +3538,7 @@ const [showSubfolderMods, setShowSubfolderMods] = useState(true);
             onToggle={() => contextMenu.mod && handleToggleMod(contextMenu.mod.path)}
             onRename={() => {
               if (contextMenu.mod) {
-                if (gameRunning) {
+                if (gameRunning && !bypassGameRunningLock) {
                   alert.warning(
                     'Game Running',
                     'Cannot rename mods while game is running.'

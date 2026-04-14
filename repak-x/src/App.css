@@ -113,6 +113,28 @@ body {
   margin-left: auto;
 }
 
+/* VFX Button */
+.btn-vfx {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 8px 16px;
+  background: rgba(123, 44, 191, 0.1);
+  border: 1px solid rgba(123, 44, 191, 0.3);
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-vfx:hover {
+  background: rgba(123, 44, 191, 0.2);
+  border-color: rgba(123, 44, 191, 0.5);
+  transform: translateY(-1px);
+}
+
 /* Launch Button Content Wrapper */
 .launch-button-content {
   display: flex;
