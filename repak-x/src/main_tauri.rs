@@ -3516,6 +3516,13 @@ fn is_game_process_running() -> bool {
             }
         }
         
+        #[cfg(target_os = "linux")]
+        for arg in process.cmd() {
+            let arg = arg.to_str().unwrap_or("").to_string();
+            if arg.to_lowercase().contains(game_exe_name) {
+                return true;
+            }
+        }
         // Fallback: Check process name() directly
         let process_name = process.name().to_string_lossy().to_lowercase();
         if process_name == game_exe_name {
@@ -3633,24 +3640,56 @@ async fn launch_game(state: State<'_, Arc<Mutex<AppState>>>) -> Result<(), Strin
                 while waited < 30000 {
                     std::thread::sleep(std::time::Duration::from_millis(1000));
                     waited += 1000;
-                    
+
                     // Check if game process is running
-                    let s = System::new_with_specifics(
-                        RefreshKind::new().with_processes(ProcessRefreshKind::new())
-                    );
+                    let process_refresh = {
+                        // On Linux, we need full process info because cmdline is required for detection.
+                        // On other platforms, minimal process info is sufficient.
+                        #[cfg(target_os = "linux")]
+                        {
+                            ProcessRefreshKind::everything()
+                        }
                     
+                        #[cfg(not(target_os = "linux"))]
+                        {
+                            ProcessRefreshKind::new()
+                        }
+                    };
+                    
+                    let s = System::new_with_specifics(
+                        RefreshKind::new().with_processes(process_refresh)
+                    );
+
                     let mut found = false;
+                    
                     for (_pid, process) in s.processes() {
-                        let process_name = process.name().to_string_lossy().to_lowercase();
-                        if process_name == "marvel-win64-shipping.exe" {
-                            info!("Game process detected, waiting 2 more seconds before restoring launch_record");
-                            std::thread::sleep(std::time::Duration::from_secs(2));
-                            found = true;
-                            game_started = true;
-                            break;
+
+                        // CMD parsing for linux
+                        #[cfg(target_os = "linux")]
+                        for arg in process.cmd() {
+                            let arg = arg.to_str().unwrap_or("").to_string();
+                            if arg.to_lowercase().contains("marvel-win64-shipping.exe") {
+                                std::thread::sleep(std::time::Duration::from_secs(2));
+                                found = true;
+                                game_started = true;
+                                break;
+                            }
+                        }
+
+                        // for macos and windows
+                        #[cfg(not(target_os = "linux"))]
+                        {
+                            let process_name = process.name().to_string_lossy().to_lowercase();
+                            if process_name == "marvel-win64-shipping.exe" {
+                                info!("Game process detected, waiting 2 more seconds before restoring launch_record");
+                                std::thread::sleep(std::time::Duration::from_secs(2));
+                                found = true;
+                                game_started = true;
+                                break;
+                            }
                         }
                     }
-                    
+
                     if found {
                         break;
                     }
