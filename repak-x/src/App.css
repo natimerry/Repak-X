@@ -119,20 +119,36 @@ body {
   align-items: center;
   gap: 0;
   padding: 8px 16px;
-  background: rgba(123, 44, 191, 0.1);
-  border: 1px solid rgba(123, 44, 191, 0.3);
+  background: linear-gradient(135deg,
+      color-mix(in srgb, var(--accent-primary), transparent 78%),
+      color-mix(in srgb, var(--accent-secondary), transparent 64%));
+  border: 1px solid color-mix(in srgb, var(--accent-primary), transparent 45%);
   border-radius: 6px;
-  color: #e0e0e0;
+  color: var(--text-primary);
   font-size: 14px;
-  font-weight: 500;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-primary), transparent 78%) inset,
+    0 6px 18px color-mix(in srgb, var(--accent-primary), transparent 82%);
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .btn-vfx:hover {
-  background: rgba(123, 44, 191, 0.2);
-  border-color: rgba(123, 44, 191, 0.5);
-  transform: translateY(-1px);
+  background: linear-gradient(135deg,
+      color-mix(in srgb, var(--accent-primary), transparent 64%),
+      color-mix(in srgb, var(--accent-secondary), transparent 48%));
+  border-color: color-mix(in srgb, var(--accent-primary), transparent 24%);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent-primary), transparent 70%),
+    0 8px 20px color-mix(in srgb, var(--accent-primary), transparent 78%);
+  transform: translateY(-1px) scale(1.01);
+}
+
+.btn-vfx svg {
+  font-size: 1.2rem;
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent-primary), transparent 48%));
 }
 
 /* Launch Button Content Wrapper */
@@ -1056,6 +1072,10 @@ input[type="text"]:focus {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-secondary);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* Mod Type Badge */

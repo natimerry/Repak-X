@@ -135,6 +135,7 @@ struct ModMetadata {
 #[derive(Clone, Serialize, Deserialize)]
 struct ModEntry {
     path: PathBuf,
+    utoc_path: Option<PathBuf>,
     enabled: bool,
     custom_name: Option<String>,
     folder_id: Option<String>,
@@ -433,6 +434,14 @@ async fn get_pak_files(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<Mod
         // Check for .pak, .bak_repak, and .pak_disabled files
         if ext == Some("pak") || ext == Some("bak_repak") || ext == Some("pak_disabled") {
             let is_enabled = ext == Some("pak");
+            let utoc_path = if ext == Some("pak") || ext == Some("pak_disabled") {
+                let candidate = path.with_extension("utoc");
+                if candidate.exists() { Some(candidate) } else { None }
+            } else {
+                let enabled_pak_path = PathBuf::from(path.to_string_lossy().trim_end_matches(".bak_repak").to_string());
+                let candidate = enabled_pak_path.with_extension("utoc");
+                if candidate.exists() { Some(candidate) } else { None }
+            };
             
             // Determine which folder this mod is in
             let root_folder_name = game_path.file_name()
@@ -505,6 +514,7 @@ async fn get_pak_files(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<Mod
             
             mods.push(ModEntry {
                 path: path.to_path_buf(),
+                utoc_path,
                 enabled: is_enabled,
                 custom_name: metadata.and_then(|m| m.custom_name.clone()),
                 folder_id,
@@ -556,6 +566,14 @@ async fn get_pak_files_in_folder(
         // Check for .pak, .bak_repak, and .pak_disabled files
         if ext == Some("pak") || ext == Some("bak_repak") || ext == Some("pak_disabled") {
             let is_enabled = ext == Some("pak");
+            let utoc_path = if ext == Some("pak") || ext == Some("pak_disabled") {
+                let candidate = path.with_extension("utoc");
+                if candidate.exists() { Some(candidate) } else { None }
+            } else {
+                let enabled_pak_path = PathBuf::from(path.to_string_lossy().trim_end_matches(".bak_repak").to_string());
+                let candidate = enabled_pak_path.with_extension("utoc");
+                if candidate.exists() { Some(candidate) } else { None }
+            };
             
             // Determine which folder this mod is in
             let root_folder_name = game_path.file_name()
@@ -617,6 +635,7 @@ async fn get_pak_files_in_folder(
             
             mods.push(ModEntry {
                 path: path.to_path_buf(),
+                utoc_path,
                 enabled: is_enabled,
                 custom_name: metadata.and_then(|m| m.custom_name.clone()),
                 folder_id,
@@ -2808,7 +2827,16 @@ async fn update_folder(
 async fn delete_folder(id: String, state: State<'_, Arc<Mutex<AppState>>>, window: Window) -> Result<(), String> {
     let state = state.lock().unwrap();
     let game_path = &state.game_path;
-    
+
+    let root_name = game_path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    if id == root_name {
+        let error_msg = "Cannot delete the root folder".to_string();
+        toast_events::emit_folder_delete_failed(&window, &error_msg);
+        return Err(error_msg);
+    }
+
     let folder_path = game_path.join(&id);
     
     if !folder_path.exists() {
@@ -2817,9 +2845,38 @@ async fn delete_folder(id: String, state: State<'_, Arc<Mutex<AppState>>>, windo
         return Err(error_msg);
     }
     
-    // Delete physical directory (will fail if not empty, which is good for safety)
-    if let Err(e) = std::fs::remove_dir(&folder_path) {
-        let error_msg = format!("Failed to delete folder (may not be empty): {}", e);
+    let canonical_game_path = match game_path.canonicalize() {
+        Ok(path) => path,
+        Err(e) => {
+            let error_msg = format!("Failed to resolve game path: {}", e);
+            toast_events::emit_folder_delete_failed(&window, &error_msg);
+            return Err(error_msg);
+        }
+    };
+
+    let canonical_folder_path = match folder_path.canonicalize() {
+        Ok(path) => path,
+        Err(e) => {
+            let error_msg = format!("Failed to resolve folder path: {}", e);
+            toast_events::emit_folder_delete_failed(&window, &error_msg);
+            return Err(error_msg);
+        }
+    };
+
+    if !canonical_folder_path.starts_with(&canonical_game_path) || canonical_folder_path == canonical_game_path {
+        let error_msg = "Refusing to delete outside the mods directory".to_string();
+        toast_events::emit_folder_delete_failed(&window, &error_msg);
+        return Err(error_msg);
+    }
+
+    if !canonical_folder_path.is_dir() {
+        let error_msg = "Target path is not a folder".to_string();
+        toast_events::emit_folder_delete_failed(&window, &error_msg);
+        return Err(error_msg);
+    }
+
+    if let Err(e) = std::fs::remove_dir_all(&canonical_folder_path) {
+        let error_msg = format!("Failed to delete folder: {}", e);
         toast_events::emit_folder_delete_failed(&window, &error_msg);
         return Err(error_msg);
     }
@@ -2909,6 +2966,138 @@ async fn rename_folder(
             folder.id = format!("{}/{}", new_id, suffix);
         }
         // Update parent_id references
+        if let Some(ref pid) = folder.parent_id {
+            if pid == &id {
+                folder.parent_id = Some(new_id.clone());
+            } else if pid.starts_with(&old_prefix) {
+                let suffix = &pid[old_prefix.len()..];
+                folder.parent_id = Some(format!("{}/{}", new_id, suffix));
+            }
+        }
+    }
+
+    save_state(&state).map_err(|e| e.to_string())?;
+
+    Ok(new_id)
+}
+
+/// Move a folder under a different parent (or to root).
+/// - `id`: existing folder relative path (e.g. "A/B")
+/// - `new_parent_id`: target parent's relative path, or None / root_name to
+///   place the folder at the top level.
+/// The leaf folder name is preserved; the operation is essentially a rename
+/// of the full relative path. Cycles (moving a folder into itself or one of
+/// its descendants) and name collisions are rejected.
+#[tauri::command]
+async fn move_folder(
+    id: String,
+    new_parent_id: Option<String>,
+    state: State<'_, Arc<Mutex<AppState>>>,
+    window: Window,
+) -> Result<String, String> {
+    let mut state = state.lock().unwrap();
+    let game_path = state.game_path.clone();
+
+    let root_name = game_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    if id.is_empty() || id == root_name {
+        let error_msg = "Cannot move the root folder".to_string();
+        toast_events::emit_folder_rename_failed(&window, &error_msg);
+        return Err(error_msg);
+    }
+
+    // Normalize new_parent_id: empty string or root_name == root.
+    let parent_rel: Option<String> = match new_parent_id.as_deref() {
+        None => None,
+        Some(s) if s.is_empty() || s == root_name => None,
+        Some(s) => Some(s.replace('\\', "/")),
+    };
+
+    let leaf_name = std::path::Path::new(&id)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "Invalid folder id".to_string())?
+        .to_string();
+
+    let new_id = match &parent_rel {
+        Some(p) => format!("{}/{}", p, leaf_name),
+        None => leaf_name.clone(),
+    };
+
+    if new_id == id {
+        return Ok(new_id);
+    }
+
+    // Reject moving a folder into itself or its descendants.
+    if let Some(p) = &parent_rel {
+        let descendant_prefix = format!("{}/", id);
+        if p == &id || p.starts_with(&descendant_prefix) {
+            let error_msg = "Cannot move a folder into itself or its own descendants".to_string();
+            toast_events::emit_folder_rename_failed(&window, &error_msg);
+            return Err(error_msg);
+        }
+    }
+
+    let old_path = game_path.join(&id);
+    if !old_path.exists() {
+        let error_msg = "Folder does not exist".to_string();
+        toast_events::emit_folder_rename_failed(&window, &error_msg);
+        return Err(error_msg);
+    }
+
+    if let Some(p) = &parent_rel {
+        let parent_path = game_path.join(p);
+        if !parent_path.exists() || !parent_path.is_dir() {
+            let error_msg = "Target parent folder does not exist".to_string();
+            toast_events::emit_folder_rename_failed(&window, &error_msg);
+            return Err(error_msg);
+        }
+    }
+
+    let new_path = game_path.join(&new_id);
+    if new_path.exists() {
+        let error_msg = format!(
+            "A folder named \"{}\" already exists at the target location",
+            leaf_name
+        );
+        toast_events::emit_folder_rename_failed(&window, &error_msg);
+        return Err(error_msg);
+    }
+
+    if let Err(e) = std::fs::rename(&old_path, &new_path) {
+        let error_msg = format!("Failed to move folder: {}", e);
+        toast_events::emit_folder_rename_failed(&window, &error_msg);
+        return Err(error_msg);
+    }
+
+    // Update mod metadata folder_id references.
+    let old_prefix = format!("{}/", id);
+    for metadata in state.mod_metadata.iter_mut() {
+        if let Some(ref fid) = metadata.folder_id {
+            if fid == &id {
+                metadata.folder_id = Some(new_id.clone());
+            } else if fid.starts_with(&old_prefix) {
+                let suffix = &fid[old_prefix.len()..];
+                metadata.folder_id = Some(format!("{}/{}", new_id, suffix));
+            }
+        }
+    }
+
+    // Update folder list (id + parent_id) for the moved folder and any
+    // descendants whose ids have just changed.
+    let new_parent_for_moved = parent_rel.clone().unwrap_or_else(|| root_name.clone());
+    for folder in state.folders.iter_mut() {
+        if folder.id == id {
+            folder.id = new_id.clone();
+            folder.parent_id = Some(new_parent_for_moved.clone());
+        } else if folder.id.starts_with(&old_prefix) {
+            let suffix = &folder.id[old_prefix.len()..];
+            folder.id = format!("{}/{}", new_id, suffix);
+        }
         if let Some(ref pid) = folder.parent_id {
             if pid == &id {
                 folder.parent_id = Some(new_id.clone());
@@ -3641,7 +3830,7 @@ async fn launch_game(state: State<'_, Arc<Mutex<AppState>>>) -> Result<(), Strin
                 while waited < 30000 {
                     std::thread::sleep(std::time::Duration::from_millis(1000));
                     waited += 1000;
-
+                    
                     // Check if game process is running
                     let process_refresh = {
                         // On Linux, we need full process info because cmdline is required for detection.
@@ -3660,9 +3849,8 @@ async fn launch_game(state: State<'_, Arc<Mutex<AppState>>>) -> Result<(), Strin
                     let s = System::new_with_specifics(
                         RefreshKind::new().with_processes(process_refresh)
                     );
-
-                    let mut found = false;
                     
+                    let mut found = false;
                     for (_pid, process) in s.processes() {
 
                         // CMD parsing for linux
@@ -6491,6 +6679,7 @@ fn main() {
             update_folder,
             delete_folder,
             rename_folder,
+            move_folder,
             assign_mod_to_folder,
             add_custom_tag,
             remove_custom_tag,
@@ -6590,7 +6779,8 @@ fn main() {
             vfx_updater::vfx_write_json_file,
             vfx_updater::vfx_list_json_files,
             vfx_updater::vfx_get_settings,
-            vfx_updater::vfx_save_settings
+            vfx_updater::vfx_save_settings,
+            vfx_updater::vfx_check_usmap_update
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

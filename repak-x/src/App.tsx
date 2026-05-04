@@ -30,6 +30,7 @@ import { MdDriveFileMoveOutline } from "react-icons/md"
 import { FaTag, FaToolbox } from "react-icons/fa6"
 import { IoMdWifi, IoIosSettings, IoMdWarning } from "react-icons/io"
 import { GrInstall } from "react-icons/gr"
+import { GiLightningTrio } from "react-icons/gi"
 import Checkbox from './components/ui/Checkbox'
 import ModDetailsPanel from './components/ModDetailsPanel'
 import ModsList from './components/ModsList'
@@ -79,6 +80,8 @@ const ACCENT_COLORS_MAP: Record<string, string> = {
   pink: '#FF96BC'
 };
 
+const VFX_UPDATER_MOD_PREFILL_KEY = 'repakx:vfxUpdater:modPath'
+
 import TitleBar from './components/TitleBar'
 
 import InstallModPanel from './components/InstallModPanel'
@@ -90,6 +93,7 @@ import ClashPanel from './components/ClashPanel'
 
 type ModRecord = {
   path: string
+  utoc_path?: string
   mod_name?: string
   custom_name?: string
   customName?: string
@@ -146,7 +150,7 @@ type ContextMenuState = {
   folder?: FolderRecord | null
 }
 
-type NewFolderPromptState = { paths: string[] }
+type NewFolderPromptState = { paths: string[]; moveFolderId?: string }
 type NewTagPromptState = { callback: (tag: string) => void }
 type NewFolderFromInstallState = { callback: (name: string) => void }
 type RenameFolderPromptState = { folderId: string; currentName: string }
@@ -389,6 +393,52 @@ function App() {
 
 
   const alert = useAlert();
+
+  const openVfxUpdaterWindow = async (modUtocPath?: string | null) => {
+    if (modUtocPath) {
+      localStorage.setItem(VFX_UPDATER_MOD_PREFILL_KEY, modUtocPath)
+    }
+
+    try {
+      const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
+      const existing = await WebviewWindow.getByLabel('vfx-updater')
+      if (existing) {
+        await existing.setFocus()
+        return
+      }
+
+      const vfxWindow = new WebviewWindow('vfx-updater', {
+        url: '/vfx-updater',
+        title: 'Repak VFX Updater',
+        width: 650,
+        height: 750,
+        center: true,
+        resizable: false,
+        decorations: false,
+      })
+
+      vfxWindow.once('tauri://error', (e) => {
+        console.error('[VFX] Failed to create window:', e)
+      })
+    } catch (e) {
+      console.error('[VFX] Window error:', e)
+    }
+  }
+
+  const handleSendToVfxUpdater = async (mod: ModRecord | null) => {
+    if (!mod) return
+
+    const utocPath = typeof mod.utoc_path === 'string' && mod.utoc_path.length > 0
+      ? mod.utoc_path
+      : null
+
+    if (!utocPath) {
+      alert.warning('No UTOC Metadata', 'Selected mod does not include backend .utoc metadata for VFX Updater.')
+      return
+    }
+
+    await openVfxUpdaterWindow(utocPath)
+  }
 
   // Global tooltips - replaces native browser tooltips with styled ones
   useGlobalTooltips();
@@ -1701,8 +1751,8 @@ function App() {
     }
   }
 
-  const handleCreateFolder = () => {
-    setNewFolderPrompt({ paths: [] })
+  const handleCreateFolder = (options?: { moveFolderId?: string }) => {
+    setNewFolderPrompt({ paths: [], moveFolderId: options?.moveFolderId })
   }
 
   // Create a folder and return its ID (for use by overlay components)
@@ -1726,11 +1776,22 @@ function App() {
     if (!newFolderPrompt) return
 
     const paths = newFolderPrompt.paths || []
+    const moveFolderId = newFolderPrompt.moveFolderId
     const pathCount = paths.length
     const pathsCopy = [...paths]
 
     // Check specific to quick organize flow
     const isQuickOrganize = pathCount > 0
+    const isMoveAfterCreate = !!moveFolderId
+
+    if (isMoveAfterCreate && gameRunning && !bypassGameRunningLock) {
+      setNewFolderPrompt(null)
+      alert.warning(
+        'Game Running',
+        'Cannot move folders while game is running.'
+      )
+      return
+    }
 
     setNewFolderPrompt(null) // Close the modal
 
@@ -1750,6 +1811,18 @@ function App() {
           await invoke('create_folder', { name: folderName })
           await loadFolders()
 
+          if (isMoveAfterCreate && moveFolderId) {
+            const newId = await invoke('move_folder', { id: moveFolderId, newParentId: folderName }) as string
+            if (selectedFolderId === moveFolderId) {
+              setSelectedFolderId(newId)
+            }
+            await loadFolders()
+            await loadMods()
+            setStatus(`Folder moved to "${newId}"`)
+
+            return { folder: folderName, movedFolderId: moveFolderId, isInstall: false, isMove: true }
+          }
+
           if (isQuickOrganize) {
             // Then quick organize to the new folder
             await invoke('quick_organize', { paths: pathsCopy, targetFolder: folderName })
@@ -1757,10 +1830,10 @@ function App() {
             await loadFolders()
             setStatus(`Installed ${pathCount} item(s) to "${folderName}"!`)
 
-            return { count: pathCount, folder: folderName, isInstall: true }
+            return { count: pathCount, folder: folderName, isInstall: true, isMove: false }
           } else {
             setStatus(`Folder "${folderName}" created`)
-            return { folder: folderName, isInstall: false }
+            return { folder: folderName, isInstall: false, isMove: false }
           }
         } finally {
           setIsModsLoading(false)
@@ -1775,10 +1848,16 @@ function App() {
             : `Creating folder "${folderName}"...`
         },
         success: (result) => ({
-          title: result.isInstall ? 'Installation Complete' : 'Folder Created',
+          title: result.isInstall
+            ? 'Installation Complete'
+            : result.isMove
+              ? 'Folder Moved'
+              : 'Folder Created',
           description: result.isInstall
             ? `Created folder and installed ${result.count} mod${result.count > 1 ? 's' : ''}`
-            : `Successfully created "${result.folder}"`
+            : result.isMove
+              ? `Created "${result.folder}" and moved "${result.movedFolderId}" into it`
+              : `Successfully created "${result.folder}"`
         }),
         error: (err) => ({
           title: 'Operation Failed',
@@ -1807,6 +1886,27 @@ function App() {
 
   const handleRenameFolder = (folderId: string, currentName: string) => {
     setRenameFolderPrompt({ folderId, currentName })
+  }
+
+  const handleMoveFolder = async (folderId: string, newParentId: string | null) => {
+    if (gameRunning && !bypassGameRunningLock) {
+      alert.warning(
+        'Game Running',
+        'Cannot move folders while game is running.'
+      )
+      return
+    }
+    try {
+      const newId = await invoke('move_folder', { id: folderId, newParentId }) as string
+      if (selectedFolderId === folderId) {
+        setSelectedFolderId(newId)
+      }
+      await loadFolders()
+      await loadMods()
+      setStatus(`Folder moved to "${newId}"`)
+    } catch (error) {
+      setStatus('Error moving folder: ' + error)
+    }
   }
 
   const handleRenameFolderConfirm = async (newName: string) => {
@@ -2058,7 +2158,7 @@ function App() {
         try {
           await invoke('quick_organize', {
             paths: [modPath],
-            targetFolder: targetFolderId || null
+            targetFolder: targetFolderId || ''
           })
 
           await loadMods()
@@ -2121,7 +2221,7 @@ function App() {
         try {
           await invoke('quick_organize', {
             paths: pathsCopy,
-            targetFolder: targetFolderId || null
+            targetFolder: targetFolderId || ''
           })
 
           await loadMods()
@@ -2974,37 +3074,6 @@ function App() {
           </div>
         </div>
         <div className="header-actions-right">
-          {/* VFX Updater Button */}
-          <button
-            className="btn-settings btn-vfx"
-            title="Open Repak VFX Updater"
-            onClick={async () => {
-              try {
-                const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
-                const existing = await WebviewWindow.getByLabel('vfx-updater')
-                if (existing) {
-                  await existing.setFocus()
-                  return
-                }
-                const vfxWindow = new WebviewWindow('vfx-updater', {
-                  url: '/vfx-updater',
-                  title: 'Repak VFX Updater',
-                  width: 650,
-                  height: 750,
-                  center: true,
-                  resizable: false,
-                  decorations: false,
-                })
-                vfxWindow.once('tauri://error', (e) => {
-                  console.error('[VFX] Failed to create window:', e)
-                })
-              } catch (e) {
-                console.error('[VFX] Window error:', e)
-              }
-            }}
-          >
-            <span>VFX Updater</span>
-          </button>
           <button
             className="btn-settings"
             data-tour="launch-btn"
@@ -3072,6 +3141,18 @@ function App() {
                 </motion.span>
               )}
             </AnimatePresence>
+          </button>
+
+          {/* VFX Updater Button */}
+          <button
+            className="btn-settings btn-vfx"
+            title="Open Repak VFX Updater"
+            onClick={async () => {
+              await openVfxUpdaterWindow()
+            }}
+          >
+            <GiLightningTrio style={{ marginRight: '6px' }} />
+            <span>VFX Updater</span>
           </button>
 
           <button
@@ -3256,7 +3337,7 @@ function App() {
               <div className="sidebar-header">
                 <h3>Folders</h3>
                 <div className="sidebar-header-actions">
-                  <button onClick={handleCreateFolder} className="btn-icon" title="New Folder">
+                  <button onClick={() => handleCreateFolder()} className="btn-icon" title="New Folder">
                     <CreateNewFolderIcon fontSize="small" />
                   </button>
                 </div>
@@ -3526,6 +3607,7 @@ function App() {
             onAssignTag={(tag) => contextMenu.mod && handleAddTagToSingleMod(contextMenu.mod.path, tag)}
             onNewTag={(callback) => setNewTagPrompt({ callback })}
             onMoveTo={(folderId) => contextMenu.mod && handleMoveSingleMod(contextMenu.mod.path, folderId)}
+            onMoveFolderTo={(newParentId) => contextMenu.folder && handleMoveFolder(contextMenu.folder.id, newParentId)}
             onCreateFolder={handleCreateFolder}
             folders={folders}
             onDelete={() => {
@@ -3555,6 +3637,7 @@ function App() {
             }}
             onCheckConflicts={() => contextMenu.mod && handleCheckSingleModClashes(contextMenu.mod)}
             onUpdateMod={() => contextMenu.mod && handleInitiateUpdate(contextMenu.mod)}
+            onSendToVfxUpdater={() => contextMenu.mod && handleSendToVfxUpdater(contextMenu.mod)}
             onExtractAssets={handleExtractAssets}
             allTags={allTags}
             onDeleteTag={handleDeleteTagFromCatalog}

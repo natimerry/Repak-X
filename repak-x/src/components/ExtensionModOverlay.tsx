@@ -252,8 +252,8 @@ const ExtensionModOverlay = ({
                                     {/* Root folder */}
                                     {rootFolder && (
                                         <div
-                                            className={`ext-folder-item root-item ${selectedFolderId === rootFolder.id ? 'selected' : ''}`}
-                                            onClick={() => setSelectedFolderId(rootFolder.id)}
+                                            className={`ext-folder-item root-item ${selectedFolderId === null ? 'selected' : ''}`}
+                                            onClick={() => setSelectedFolderId(null)}
                                         >
                                             <span className="folder-icon"><VscFolderOpened /></span>
                                             <span className="folder-name">{rootFolder.name}</span>

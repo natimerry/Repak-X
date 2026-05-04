@@ -120,10 +120,15 @@
   transition: all 0.2s ease;
 }
 
-.vfx-input-group button:hover {
+.vfx-input-group button:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent-primary, #4a9eff), transparent 80%);
   border-color: var(--accent-primary, #4a9eff);
   color: var(--accent-primary, #4a9eff);
+}
+
+.vfx-input-group button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .vfx-start-wrapper {

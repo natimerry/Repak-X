@@ -38,6 +38,11 @@
   padding: 1rem;
 }
 
+.details-panel .details-body::-webkit-scrollbar-corner,
+.details-panel::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 .detail-section {
   margin-bottom: 1.5rem;
 }
@@ -180,4 +185,19 @@
   padding: 8px 12px;
   color: var(--text-primary);
   font-size: 0.85rem;
+}
+
+.details-panel .file-list-container {
+  overflow-x: auto;
+}
+
+.details-panel .file-list-container .node-content {
+  width: max-content;
+  min-width: 100%;
+}
+
+.details-panel .file-list-container .node-label {
+  overflow: visible;
+  text-overflow: clip;
+  flex: 0 0 auto;
 }

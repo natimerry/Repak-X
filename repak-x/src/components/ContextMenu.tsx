@@ -26,7 +26,8 @@ type ContextMenuProps = {
   onAssignTag: (tag: string) => void
   onNewTag: (callback: (tag: string) => void) => void
   onMoveTo: (folderId: string | null) => void
-  onCreateFolder: () => void
+  onMoveFolderTo?: (newParentId: string | null) => void
+  onCreateFolder: (options?: { moveFolderId?: string }) => void
   folders: FolderRecord[]
   onDelete: () => void
   onToggle: () => void
@@ -34,6 +35,7 @@ type ContextMenuProps = {
   onRenameFolder: () => void
   onCheckConflicts?: () => void
   onUpdateMod?: () => void
+  onSendToVfxUpdater?: (mod: ModRecord) => void
   onExtractAssets?: (mod: ModRecord) => void
   allTags: string[]
   onDeleteTag?: (tag: string) => void
@@ -41,7 +43,7 @@ type ContextMenuProps = {
   holdToDelete?: boolean
 }
 
-const ContextMenu = ({ x, y, mod, folder, onClose, onAssignTag, onNewTag, onMoveTo, onCreateFolder, folders, onDelete, onToggle, onRename, onRenameFolder, onCheckConflicts, onUpdateMod, onExtractAssets, allTags, onDeleteTag, gamePath, holdToDelete = true }: ContextMenuProps) => {
+const ContextMenu = ({ x, y, mod, folder, onClose, onAssignTag, onNewTag, onMoveTo, onMoveFolderTo, onCreateFolder, folders, onDelete, onToggle, onRename, onRenameFolder, onCheckConflicts, onUpdateMod, onSendToVfxUpdater, onExtractAssets, allTags, onDeleteTag, gamePath, holdToDelete = true }: ContextMenuProps) => {
   const [isDeleting, setIsDeleting] = useState(false)
   const deleteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
@@ -126,7 +128,77 @@ const ContextMenu = ({ x, y, mod, folder, onClose, onAssignTag, onNewTag, onMove
     onClose()
   }
 
+  // Re-position a submenu when it would otherwise clip the viewport. The
+  // submenu is normally anchored at `top: -4px; left: 100%`. On enter we
+  // measure it and switch to bottom-anchored / right-anchored placement if
+  // needed. Runs on every enter so it stays correct when the parent menu
+  // is opened in different spots.
+  const handleSubmenuEnter = (e: React.MouseEvent<HTMLDivElement>) => {
+    const trigger = e.currentTarget
+    const submenu = trigger.querySelector<HTMLElement>(':scope > .submenu')
+    if (!submenu) return
+
+    // Reset prior overrides so the measurement reflects the default anchor.
+    submenu.style.top = ''
+    submenu.style.bottom = ''
+    submenu.style.left = ''
+    submenu.style.right = ''
+    submenu.style.maxHeight = ''
+    submenu.style.overflowY = ''
+
+    requestAnimationFrame(() => {
+      const triggerRect = trigger.getBoundingClientRect()
+      const subRect = submenu.getBoundingClientRect()
+      const vw = window.innerWidth
+      const vh = window.innerHeight
+      const margin = 10
+
+      // Vertical: flip up if bottom edge clips
+      if (subRect.bottom > vh - margin) {
+        const spaceAbove = triggerRect.bottom - margin
+        const spaceBelow = vh - triggerRect.top - margin
+        if (spaceAbove > spaceBelow) {
+          submenu.style.top = 'auto'
+          submenu.style.bottom = '-4px'
+          if (subRect.height > spaceAbove) {
+            submenu.style.maxHeight = `${spaceAbove}px`
+            submenu.style.overflowY = 'auto'
+          }
+        } else {
+          // Not enough room above either; cap height and scroll downward.
+          submenu.style.maxHeight = `${spaceBelow}px`
+          submenu.style.overflowY = 'auto'
+        }
+      }
+
+      // Horizontal: flip left if right edge clips
+      const projectedRight = triggerRect.right + subRect.width
+      if (projectedRight > vw - margin) {
+        submenu.style.left = 'auto'
+        submenu.style.right = '100%'
+      }
+    })
+  }
+
   if (folder) {
+    // Compute the candidate destination parents:
+    //   - the folder itself
+    //   - any descendants (id starts with "<folder.id>/")
+    //   - the folder's current parent (would be a no-op move)
+    // are excluded.
+    const rootFolder = folders.find(f => f.is_root)
+    const currentParentId: string | null = folder.id.includes('/')
+      ? folder.id.substring(0, folder.id.lastIndexOf('/'))
+      : null
+    const moveCandidates = folders.filter(f => {
+      if (f.is_root) return false
+      if (f.id === folder.id) return false
+      if (f.id.startsWith(`${folder.id}/`)) return false
+      if (f.id === currentParentId) return false
+      return true
+    })
+    const canMoveToRoot = currentParentId !== null
+
     return (
       <div ref={menuRef} className="context-menu" style={{ top: adjustedPos.y, left: adjustedPos.x }} onClick={(e) => e.stopPropagation()}>
         <div className="context-menu-header">{folder.name}</div>
@@ -156,6 +228,40 @@ const ContextMenu = ({ x, y, mod, folder, onClose, onAssignTag, onNewTag, onMove
         }}>
           Copy Path
         </div>
+
+        {onMoveFolderTo && (
+          <div className="context-menu-item submenu-trigger" onMouseEnter={handleSubmenuEnter}>
+            Move to...
+            <div className="submenu">
+              {canMoveToRoot && (
+                <div className="context-menu-item" onClick={() => { onMoveFolderTo(null); onClose(); }}>
+                  Root ({rootFolder?.name || '~mods'})
+                </div>
+              )}
+              <div className="context-menu-item" onClick={() => { onCreateFolder({ moveFolderId: folder.id }); onClose(); }}>
+                + New Folder...
+              </div>
+              {moveCandidates.length > 0 && (
+                <>
+                  <div className="context-menu-separator" />
+                  <div className="scrollable-menu-list" style={{ maxHeight: '300px', overflowY: 'auto', paddingRight: '4px' }}>
+                    {moveCandidates.map(f => (
+                      <div key={f.id} className="context-menu-item" onClick={() => { onMoveFolderTo(f.id); onClose(); }}>
+                        {f.id}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+              {moveCandidates.length === 0 && !canMoveToRoot && (
+                <div className="context-menu-item" style={{ opacity: 0.5, cursor: 'default' }}>
+                  No valid destinations
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="context-menu-item" onClick={(e) => {
           e.stopPropagation();
           onRenameFolder();
@@ -183,7 +289,7 @@ const ContextMenu = ({ x, y, mod, folder, onClose, onAssignTag, onNewTag, onMove
     <div ref={menuRef} className="context-menu" style={{ top: adjustedPos.y, left: adjustedPos.x }} onClick={(e) => e.stopPropagation()}>
       <div className="context-menu-header">{mod.custom_name || mod.path.split(/[/\\]/).pop()}</div>
 
-      <div className="context-menu-item submenu-trigger">
+      <div className="context-menu-item submenu-trigger" onMouseEnter={handleSubmenuEnter}>
         Assign Tag...
         <div className="submenu">
           <div className="context-menu-item" onClick={() => {
@@ -216,7 +322,7 @@ const ContextMenu = ({ x, y, mod, folder, onClose, onAssignTag, onNewTag, onMove
         </div>
       </div>
 
-      <div className="context-menu-item submenu-trigger">
+      <div className="context-menu-item submenu-trigger" onMouseEnter={handleSubmenuEnter}>
         Move to...
         <div className="submenu">
           <div className="context-menu-item" onClick={() => { onCreateFolder(); onClose(); }}>
@@ -245,6 +351,10 @@ const ContextMenu = ({ x, y, mod, folder, onClose, onAssignTag, onNewTag, onMove
 
       <div className="context-menu-item" onClick={() => { if (onUpdateMod) onUpdateMod(); onClose(); }}>
         Update/Replace
+      </div>
+
+      <div className="context-menu-item" onClick={() => { if (onSendToVfxUpdater) onSendToVfxUpdater(mod); onClose(); }}>
+        Send to VFX Updater
       </div>
 
       <div className="context-menu-separator" />

@@ -98,15 +98,15 @@ export function usePipeline({
 
     try {
       // Initialize
-      addLog("Starting VFX update pipeline...", "info");
-      console.debug("[VFX] Pipeline started", { usmapPath, gamePaksPath, modPath, outputPath });
+      addLog("Preparing VFX update pipeline.", "info");
+      console.debug("[VFX] Pipeline ready", { usmapPath, gamePaksPath, modPath, outputPath });
 
       // Cleanup previous temp directories
-      addLog("Cleaning up previous temp files...", "info");
+      addLog("Cleaning up previous temp files.", "info");
       await invoke("vfx_cleanup_temp_directories");
 
       // Start UAT session
-      addLog("Starting UAssetTool session...", "info");
+      addLog("Starting UAssetTool session.", "info");
       await invoke("vfx_start_session");
 
       // Create temp directories
@@ -191,7 +191,7 @@ export function usePipeline({
         addLog("No updatable assets found - skipping color pipeline", "warning");
         // Jump directly to pack step (step 8)
         setCurrentStep(8);
-        addLog("Step 8: Creating IOStore mod bundle...", "info");
+        addLog("Step 8: Creating IOStore mod bundle.", "info");
         setStepStatus({ message: "Packing IOStore..." });
 
         const modBaseName = modPath
@@ -237,7 +237,7 @@ export function usePipeline({
       // ===== STEP 2: Mod UAssets → JSON (only blueprint/material_instance) =====
       checkCancel();
       setCurrentStep(2);
-      addLog("Step 2: Converting processable mod assets to JSON...", "info");
+      addLog("Step 2: Converting processable mod assets to JSON.", "info");
       setStepStatus({ message: "Converting mod assets to JSON..." });
 
       const modJsonFiles = await invoke<string[]>("vfx_convert_uassets_to_json", {
@@ -253,7 +253,7 @@ export function usePipeline({
       // ===== STEP 3: Parse Colors =====
       checkCancel();
       setCurrentStep(3);
-      addLog("Step 3: Extracting color parameters...", "info");
+      addLog("Step 3: Extracting color parameters.", "info");
       setStepStatus({ message: "Parsing colors from mod assets..." });
 
       const allColors: ColorParam[] = [];
@@ -328,7 +328,7 @@ export function usePipeline({
       // ===== STEP 5: Vanilla UAssets → JSON =====
       checkCancel();
       setCurrentStep(5);
-      addLog("Step 5: Converting vanilla assets to JSON...", "info");
+      addLog("Step 5: Converting vanilla assets to JSON.", "info");
       setStepStatus({ message: "Converting game assets to JSON..." });
 
       const vanillaJsonFiles = await invoke<string[]>("vfx_convert_uassets_to_json", {
@@ -344,7 +344,7 @@ export function usePipeline({
       // ===== STEP 6: Apply Colors =====
       checkCancel();
       setCurrentStep(6);
-      addLog("Step 6: Applying mod colors to vanilla assets...", "info");
+      addLog("Step 6: Applying mod colors to vanilla assets.", "info");
       setStepStatus({ message: "Applying colors..." });
 
       let appliedCount = 0;
@@ -428,7 +428,7 @@ export function usePipeline({
       // ===== STEP 8: Pack IOStore =====
       checkCancel();
       setCurrentStep(8);
-      addLog("Step 8: Creating IOStore mod bundle...", "info");
+      addLog("Step 8: Creating IOStore mod bundle.", "info");
       setStepStatus({ message: "Packing updated mod..." });
 
       const modBaseName = modPath

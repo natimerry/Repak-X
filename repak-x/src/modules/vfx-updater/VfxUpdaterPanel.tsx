@@ -18,6 +18,8 @@ import { BiCopyAlt } from 'react-icons/bi';
 import "../../components/ExtensionModOverlay.css";
 import "./VfxUpdater.css";
 
+const VFX_UPDATER_MOD_PREFILL_KEY = 'repakx:vfxUpdater:modPath'
+
 // -------------------------------------------------------------
 // Folder Tree Types and Logic (Adapted from ExtensionModOverlay)
 // -------------------------------------------------------------
@@ -148,6 +150,28 @@ export default function VfxUpdaterPanel() {
   const logsEndRef = useRef<HTMLDivElement>(null);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
 
+  useEffect(() => {
+    const applyIncomingModPath = () => {
+      const prefilledPath = localStorage.getItem(VFX_UPDATER_MOD_PREFILL_KEY)
+      if (!prefilledPath) return
+
+      setModPath(prefilledPath)
+      setViewMode('input')
+      localStorage.removeItem(VFX_UPDATER_MOD_PREFILL_KEY)
+    }
+
+    applyIncomingModPath()
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === VFX_UPDATER_MOD_PREFILL_KEY) {
+        applyIncomingModPath()
+      }
+    }
+
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
+
   const handleCopyLogs = async () => {
     if (logs.length === 0) return;
     try {
@@ -241,6 +265,78 @@ export default function VfxUpdaterPanel() {
     setLogs((prev) => [...prev, { message, type, time }]);
   }, []);
 
+  const [isFetchingUsmap, setIsFetchingUsmap] = useState(false);
+  const didRunInitialUsmapCheckRef = useRef(false);
+
+  // Run the rivals-depot USMAP check. When `force` is true, the user clicked
+  // the Fetch button — show extra UI feedback and ALWAYS apply the latest
+  // (even over a custom user selection).
+  const runUsmapCheck = useCallback(async (force: boolean) => {
+    if (force) setIsFetchingUsmap(true);
+    try {
+      const result = await invoke<{
+        updated: boolean;
+        upToDate: boolean;
+        skipped: boolean;
+        localPath?: string | null;
+        filename?: string | null;
+        version?: string | null;
+        buildNumber?: number | null;
+        commitDate?: string | null;
+        message: string;
+      }>("vfx_check_usmap_update", { force });
+
+      if (force) addLog(`Fetching latest USMAP from rivals-depot...`, "info");
+
+      if (result.updated && result.localPath && !result.skipped) {
+        setUsmapPath(result.localPath);
+        addLog(`USMAP ${force ? "fetched" : "auto-updated"}: ${result.filename ?? "(latest)"}`, "success");
+      } else if (result.updated && result.skipped) {
+        // Latest was downloaded but a custom user file was kept. On manual
+        // Fetch, switch to the freshly downloaded file regardless.
+        if (force && result.localPath) {
+          setUsmapPath(result.localPath);
+          addLog(`USMAP replaced with latest: ${result.filename ?? "(latest)"}`, "success");
+        } else {
+          addLog(result.message, "warning");
+        }
+      } else if (result.upToDate) {
+        const details = [
+          result.version,
+          result.buildNumber != null ? `${result.buildNumber}` : null,
+          result.commitDate ? `${result.commitDate}` : null,
+        ].filter(Boolean).join(" | ");
+        addLog(`USMAP up to date${details ? ` (${details})` : ""}`, force ? "success" : "info");
+        if (result.localPath && (force || !usmapPath)) setUsmapPath(result.localPath);
+      } else if (result.message) {
+        addLog(result.message, "warning");
+      }
+      return result;
+    } catch (e) {
+      console.warn("[VFX] USMAP check failed:", e);
+      addLog(`USMAP ${force ? "fetch" : "auto-check"} failed: ${String(e)}`, "warning");
+      return null;
+    } finally {
+      if (force) setIsFetchingUsmap(false);
+    }
+  }, [addLog, usmapPath]);
+
+  // Auto-pull latest USMAP from rivals-depot on mount.
+  // This runs in the background — uses GitHub ETag so the typical case is a
+  // cheap 304 Not Modified.
+  useEffect(() => {
+    if (didRunInitialUsmapCheckRef.current) return;
+    didRunInitialUsmapCheckRef.current = true;
+
+    let cancelled = false;
+    (async () => {
+      const _ = await runUsmapCheck(false);
+      if (cancelled) return;
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Make logs auto-scroll
   useEffect(() => {
     if (logsEndRef.current) logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -276,6 +372,15 @@ export default function VfxUpdaterPanel() {
     await runPipeline();
   };
 
+  const emitModsRefresh = async () => {
+    try {
+      const { emit } = await import('@tauri-apps/api/event')
+      await emit('mods_dir_changed')
+    } catch (e) {
+      console.error('[VFX] Failed to emit mods refresh event:', e)
+    }
+  }
+
   const handleCancelProcess = async () => {
     await cancelPipeline();
     setViewMode('input');
@@ -285,6 +390,7 @@ export default function VfxUpdaterPanel() {
   useEffect(() => {
     if (viewMode === 'progress' && !isProcessing && currentStep === 9) {
       setViewMode('complete');
+      void emitModsRefresh()
     }
   }, [isProcessing, currentStep, viewMode]);
 
@@ -319,6 +425,8 @@ export default function VfxUpdaterPanel() {
       }
     }
 
+    await emitModsRefresh()
+
     setViewMode('input');
     setModPath(null);
   };
@@ -330,6 +438,12 @@ export default function VfxUpdaterPanel() {
     const root = buildTree(subfolders);
     return convertToArray(root);
   }, [subfolders]);
+
+  useEffect(() => {
+    if (viewMode === 'complete' && rootFolder?.id) {
+      setSelectedFolderId(rootFolder.id)
+    }
+  }, [viewMode, rootFolder?.id])
 
   const modDisplayName = useMemo(() => {
     if (!modPath) return null;
@@ -410,6 +524,13 @@ export default function VfxUpdaterPanel() {
                 <label>USMAP File</label>
                 <div className="vfx-input-group">
                   <input type="text" value={usmapPath || ""} readOnly placeholder="Select .usmap file..." />
+                  <button
+                    onClick={() => { void runUsmapCheck(true); }}
+                    disabled={isFetchingUsmap}
+                    title="Check rivals-depot for the latest USMAP and replace the current one"
+                  >
+                    {isFetchingUsmap ? "Fetching..." : "Fetch"}
+                  </button>
                   <button onClick={() => handleFilePick(setUsmapPath, [{ name: "USMAP", extensions: ["usmap"] }], true)}>Browse</button>
                 </div>
               </div>
@@ -547,7 +668,7 @@ export default function VfxUpdaterPanel() {
               </div>
             </div>
             <div className="vfx-complete-footer">
-              <button className="btn-secondary" onClick={() => setViewMode('input')}>Leave in ~mods</button>
+              <button className="btn-secondary" onClick={() => { void emitModsRefresh(); setViewMode('input'); }}>Leave in ~mods</button>
               <button className="btn-save" onClick={handleSaveOutput}>Save to Selected</button>
             </div>
           </motion.div>

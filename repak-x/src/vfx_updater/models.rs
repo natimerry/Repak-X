@@ -3,10 +3,16 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct VfxSettings {
     /// USMAP path - VFX module only (RX doesn't use this)
     pub usmap_path: Option<String>,
+    /// SHA of the auto-managed USMAP (matches GitHub blob SHA)
+    pub usmap_sha: Option<String>,
+    /// Filename of the auto-managed USMAP
+    pub usmap_filename: Option<String>,
+    /// ETag from last GitHub Contents API response (for conditional requests)
+    pub usmap_etag: Option<String>,
     // game_paks_path and aes_key grabbed from RX settings at runtime
 }
 
@@ -14,6 +20,9 @@ impl Default for VfxSettings {
     fn default() -> Self {
         Self {
             usmap_path: None,
+            usmap_sha: None,
+            usmap_filename: None,
+            usmap_etag: None,
         }
     }
 }
