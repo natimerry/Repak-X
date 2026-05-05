@@ -3146,6 +3146,7 @@ function App() {
           {/* VFX Updater Button */}
           <button
             className="btn-settings btn-vfx"
+            data-tour="vfx-updater-btn"
             title="Open Repak VFX Updater"
             onClick={async () => {
               await openVfxUpdaterWindow()

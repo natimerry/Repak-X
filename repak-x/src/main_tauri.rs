@@ -6782,6 +6782,20 @@ fn main() {
             vfx_updater::vfx_save_settings,
             vfx_updater::vfx_check_usmap_update
         ])
+        .on_window_event(|window, event| {
+            // When the main window is closed, also close any auxiliary
+            // windows (e.g. the VFX Updater) so the app exits cleanly.
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                if window.label() == "main" {
+                    let app = window.app_handle();
+                    for (label, other) in app.webview_windows() {
+                        if label != "main" {
+                            let _ = other.close();
+                        }
+                    }
+                }
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app_handle, event| {

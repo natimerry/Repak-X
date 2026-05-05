@@ -3,11 +3,11 @@
 ## [1.4.0](https://github.com/XzantGaming/Repak-X/releases/latest)
 
 ### 🔧 Backend / Logic
-- 
-- Cached mods presence for faster and smarter listing
-- Folder deletion fixed
 - New Repak VFX Updater module using UAssetTool and RVFXE logic
 - Automatic USMAP management for RVFXU
+- Cached mods presence for faster and smarter listing
+- Folder deletion fixed
+- Asset path fallback for edge cases
 
 ### 🎨 Frontend / UI
 - Implemented the new Repak VFX Updater interface: update broken VFX mods with a single click

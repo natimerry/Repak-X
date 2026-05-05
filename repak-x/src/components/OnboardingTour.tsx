@@ -61,6 +61,12 @@ const TOUR_STEPS: TourStep[] = [
         placement: 'bottom',
     },
     {
+        target: '[data-tour="vfx-updater-btn"]',
+        title: 'VFX Updater',
+        description: "Quickly port outdated VFX mods to the latest game version. Opens a dedicated tool that automatically extracts, converts, patches, and repacks the VFX assets so your mods keep working after game updates.",
+        placement: 'bottom',
+    },
+    {
         target: '[data-tour="sharing-btn"]',
         title: 'Share Modpacks',
         description: 'Create and share modpacks securely with other Repak X users across the globe.',
