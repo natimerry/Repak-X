@@ -12,7 +12,7 @@ A next-gen Windows and Linux app to install, organize, and share mods — built 
 [![Downloads](https://img.shields.io/github/downloads/XzantGaming/Repak-X/total?style=for-the-badge&color=0ea5e9&label=Downloads)](https://github.com/XzantGaming/Repak-X/releases)
 [![Stars](https://img.shields.io/github/stars/XzantGaming/Repak-X?style=for-the-badge&color=f59e0b)](https://github.com/XzantGaming/Repak-X)
 <br/>
-[![License](https://img.shields.io/github/license/XzantGaming/Repak-X?style=for-the-badge&color=10b981)](LICENSE-MIT)
+[![License](https://img.shields.io/github/license/XzantGaming/Repak-X?style=for-the-badge&color=10b981)](LICENSE)
 [![Last Commit](https://img.shields.io/github/last-commit/XzantGaming/Repak-X?style=for-the-badge&color=6366f1)](https://github.com/XzantGaming/Repak-X/commits)
 
 ---
@@ -100,7 +100,7 @@ This project has been made possible by the following projects:
 
 ## 📜 License
 
-Licensed under [MIT](LICENSE-MIT).
+Licensed under [GPL-3.0](LICENSE).
 
 <sub>All Marvel Rivals game assets used in this project are property of Marvel and NetEase. This project is not affiliated with Marvel or NetEase in any way and is not used for profit.</sub>
 
