@@ -218,12 +218,12 @@ try {
 
 - If texture processing fails, ensure .NET Runtime 8.0 is installed
 - Check ``latest.log`` in the application directory for detailed error messages
-- For support, visit: https://github.com/natimerry/repak-rivals
+- For support, visit: https://github.com/XzantGaming/Repak-X
 
 ## License
 
-This software is licensed under MIT OR Apache-2.0.
-See LICENSE-MIT and LICENSE-APACHE for details.
+This software is licensed under GPL-3.0.
+See LICENSE for details.
 "@
     
     $distReadmePath = Join-Path $distDir "README_DIST.txt"

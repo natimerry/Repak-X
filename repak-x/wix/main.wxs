@@ -60,16 +60,16 @@
 
     <Product
         Id='*'
-        Name='repak-gui'
+        Name='Repak-X'
         UpgradeCode='3ABC116E-0858-4842-8C33-F213D7FA8A4B'
-        Manufacturer='spuds; trumank; natimerry'
+        Manufacturer='Xzant'
         Language='1033'
         Codepage='1252'
         Version='$(var.Version)'>
 
         <Package Id='*'
             Keywords='Installer'
-            Manufacturer='spuds; trumank; natimerry'
+            Manufacturer='Xzant'
             InstallerVersion='450'
             Languages='1033'
             Compressed='yes'
@@ -172,7 +172,7 @@
         <!--<Icon Id='ProductICO' SourceFile='wix\Product.ico'/>-->
         <!--<Property Id='ARPPRODUCTICON' Value='ProductICO' />-->
 
-        <Property Id='ARPHELPLINK' Value='https://github.com/natimerry/repak-rivals'/>
+        <Property Id='ARPHELPLINK' Value='https://github.com/XzantGaming/Repak-X'/>
         
         <UI>
             <UIRef Id='WixUI_FeatureTree'/>
