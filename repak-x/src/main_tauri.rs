@@ -1378,6 +1378,9 @@ struct ModToInstall {
     /// Subfolder within the mods directory to install into (empty = root)
     #[serde(rename = "installSubfolder", default)]
     install_subfolder: String,
+    /// Enable IoStore obfuscation for this install
+    #[serde(default)]
+    obfuscate: bool,
     /// Whether to include this mod in the installation (for multi-PAK selection)
     #[serde(default = "default_true")]
     enabled: bool,
@@ -1777,7 +1780,6 @@ async fn install_mods(
     let state_guard = state.lock().unwrap();
     let mod_directory = state_guard.game_path.clone();
     let parallel_processing = state_guard.parallel_processing;
-    let obfuscate = state_guard.obfuscate;
     drop(state_guard);
 
     if !mod_directory.exists() {
@@ -1880,6 +1882,7 @@ async fn install_mods(
             installable.repak = mod_to_install.to_repak;
             installable.force_legacy_pak = mod_to_install.force_legacy;
             installable.install_subfolder = mod_to_install.install_subfolder.clone();
+            installable.obfuscate = mod_to_install.obfuscate;
         } else {
             // No matching user settings found (common for archive-expanded mods)
             // IMPORTANT: Do NOT override repak or force_legacy_pak here!
@@ -1887,12 +1890,12 @@ async fn install_mods(
             // based on the actual PAK contents. Overriding them breaks IoStore conversion.
             if let Some(first_mod) = mods.first() {
                 installable.install_subfolder = first_mod.install_subfolder.clone();
+                installable.obfuscate = first_mod.obfuscate;
                 // repak and force_legacy_pak are intentionally NOT overridden
             }
         }
         
         installable.parallel_processing = parallel_processing;
-        installable.obfuscate = obfuscate;
     }
 
     // Use existing installation logic
@@ -1917,6 +1920,7 @@ async fn install_mods(
                 window_for_logs.emit("install_log", format!("[{}/{}] Mod: {}", idx + 1, installable_mods.len(), imod.mod_name)).ok();
                 window_for_logs.emit("install_log", format!("  - Repak: {}", imod.repak)).ok();
                 window_for_logs.emit("install_log", format!("  - Force Legacy PAK: {}", imod.force_legacy_pak)).ok();
+                window_for_logs.emit("install_log", format!("  - Obfuscate: {}", imod.obfuscate)).ok();
             }
             
             window_for_logs.emit("install_log", "Calling installation logic...").ok();
