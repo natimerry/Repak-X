@@ -223,12 +223,13 @@ pub fn install_mods_in_viewport(
         }
 
         if installable_mod.repak {
-            crate::install_mod::write_install_debug("  -> Taking REPAK path (extract + IoStore convert)");
+            crate::install_mod::write_install_debug("  -> Taking REPAK path (direct PAK -> IoStore)");
             // Clean up any existing variants before installing
             let base = normalize_mod_base_name(&installable_mod.mod_name, 7);
             cleanup_existing_mod_variants(&output_directory, &base);
-            
-            if let Err(e) = create_repak_from_pak(
+
+            // Use optimized path: UAssetTool extracts PAK internally, no Rust-side temp dir
+            if let Err(e) = pak_files::create_repak_from_pak_fast(
                 installable_mod,
                 output_directory.clone(),
                 installed_mods_ptr,

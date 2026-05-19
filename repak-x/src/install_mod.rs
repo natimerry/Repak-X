@@ -4,14 +4,7 @@ use crate::install_mod::install_mod_logic::archives::{extract_zip, extract_rar, 
 use crate::utils::{collect_files, get_current_pak_characteristics};
 use crate::utoc_utils::read_utoc;
 use log::{debug, error};
-use repak::utils::AesKey;
-use repak::Compression::Oodle;
-use repak::{Compression, PakReader};
-use std::fs::File;
-use std::io::BufReader;
 use std::path::PathBuf;
-use std::str::FromStr;
-use std::sync::LazyLock;
 use tempfile::tempdir;
 use walkdir::WalkDir;
 
@@ -27,9 +20,9 @@ pub struct InstallableMod {
     pub path_hash_seed: String,
     pub mount_point: String,
     #[serde(skip)]
-    pub compression: Compression,
+    pub compression: String,
     #[serde(skip)]
-    pub reader: Option<PakReader>,
+    pub reader: Option<Vec<String>>,
     pub mod_path: PathBuf,
     pub total_files: usize,
     pub iostore: bool,
@@ -65,7 +58,7 @@ impl Default for InstallableMod {
             editing: false,
             path_hash_seed: "".to_string(),
             mount_point: "".to_string(),
-            compression: Default::default(),
+            compression: "Oodle".to_string(),
             reader: None,
             mod_path: Default::default(),
             total_files: 0,
@@ -93,10 +86,7 @@ pub fn contains_uasset_files(files: &[String]) -> bool {
     })
 }
 
-pub static AES_KEY: LazyLock<AesKey> = LazyLock::new(|| {
-    AesKey::from_str("0C263D8C22DCB085894899C3A3796383E9BF9DE0CBFB08C9BF2DEF2E84F29D74")
-        .expect("Unable to initialise AES_KEY")
-});
+pub const AES_KEY_HEX: &str = "0C263D8C22DCB085894899C3A3796383E9BF9DE0CBFB08C9BF2DEF2E84F29D74";
 
 fn find_mods_from_archive(path: &str) -> Vec<InstallableMod> {
     write_install_debug(&format!("=== find_mods_from_archive called: path={} ===", path));
@@ -141,18 +131,12 @@ fn find_mods_from_archive(path: &str) -> Vec<InstallableMod> {
                 let modtype = get_current_pak_characteristics(files.clone());
                 let has_uassets = contains_uasset_files(&files);
 
-                // Try to open PAK for reader (optional - may fail for obfuscated mods)
-                let reader = repak::PakBuilder::new()
-                    .key(AES_KEY.clone().0)
-                    .reader(&mut BufReader::new(File::open(&file_path).unwrap()))
-                    .ok();
-
-                let installable_mod = InstallableMod {
+                    let installable_mod = InstallableMod {
                     mod_name: mod_base_name,
                     mod_type: modtype.to_string(),
                     repak: false,  // Don't use repak workflow for iostore mods
                     is_dir: false,
-                    reader,
+                    reader: None,
                     mod_path: file_path.to_path_buf(),
                     mount_point: "../../../".to_string(),
                     path_hash_seed: "00000000".to_string(),
@@ -160,7 +144,7 @@ fn find_mods_from_archive(path: &str) -> Vec<InstallableMod> {
                     iostore: true,  // Mark as iostore so it gets copied directly
                     is_archived: false,
                     editing: false,
-                    compression: Oodle,
+                    compression: "Oodle".to_string(),
                     contains_uassets: has_uassets,
                     ..Default::default()
                 };
@@ -170,42 +154,35 @@ fn find_mods_from_archive(path: &str) -> Vec<InstallableMod> {
             // This is a standalone .pak file
             else {
                 write_install_debug("  -> Standalone PAK path (repak)");
-                let builder = repak::PakBuilder::new()
-                    .key(AES_KEY.clone().0)
-                    .reader(&mut BufReader::new(File::open(file_path).unwrap()));
+                let files = uasset_toolkit::list_pak_files(
+                    file_path.to_str().unwrap_or_default(),
+                    Some(AES_KEY_HEX),
+                ).unwrap_or_default();
+                let len = files.len();
+                let modtype = get_current_pak_characteristics(files.clone());
+                let has_uassets = contains_uasset_files(&files);
+                let is_audio_or_movie = modtype.contains("Audio") || modtype.contains("Movies");
 
-                if let Ok(builder) = builder {
-                    let files = builder.files();
-                    let len = files.len();
-                    let modtype = get_current_pak_characteristics(files.clone());
-                    let has_uassets = contains_uasset_files(&files);
-                    
-                    // Check if this is an Audio or Movies mod (these should skip repak workflow)
-                    let is_audio_or_movie = modtype.contains("Audio") || modtype.contains("Movies");
-                    
-                    let installable_mod = InstallableMod {
-                        mod_name: mod_base_name,
-                        mod_type: modtype.to_string(),
-                        repak: !is_audio_or_movie,  // Only use repak if NOT Audio/Movies
-                        is_dir: false,
-                        reader: Some(builder),
-                        mod_path: file_path.to_path_buf(),
-                        mount_point: "../../../".to_string(),
-                        path_hash_seed: "00000000".to_string(),
-                        total_files: len,
-                        iostore: false,
-                        is_archived: false,
-                        editing: false,
-                        compression: Oodle,
-                        contains_uassets: has_uassets,
-                        ..Default::default()
-                    };
+                let installable_mod = InstallableMod {
+                    mod_name: mod_base_name,
+                    mod_type: modtype.to_string(),
+                    repak: !is_audio_or_movie,
+                    is_dir: false,
+                    reader: if files.is_empty() { None } else { Some(files) },
+                    mod_path: file_path.to_path_buf(),
+                    mount_point: "../../../".to_string(),
+                    path_hash_seed: "00000000".to_string(),
+                    total_files: len,
+                    iostore: false,
+                    is_archived: false,
+                    editing: false,
+                    compression: "Oodle".to_string(),
+                    contains_uassets: has_uassets,
+                    ..Default::default()
+                };
 
-                    write_install_debug(&format!("  Created InstallableMod: name={}, repak={}, iostore={}, type={}, files={}", installable_mod.mod_name, installable_mod.repak, installable_mod.iostore, installable_mod.mod_type, installable_mod.total_files));
-                    new_mods.push(installable_mod);
-                } else {
-                    write_install_debug("  ERROR: Failed to open PAK file");
-                }
+                write_install_debug(&format!("  Created InstallableMod: name={}, repak={}, iostore={}, type={}, files={}", installable_mod.mod_name, installable_mod.repak, installable_mod.iostore, installable_mod.mod_type, installable_mod.total_files));
+                new_mods.push(installable_mod);
             }
         }
     }
@@ -272,7 +249,7 @@ fn find_mods_from_archive(path: &str) -> Vec<InstallableMod> {
                             iostore: false,
                             is_archived: false,
                             editing: false,
-                            compression: Oodle,
+                            compression: "Oodle".to_string(),
                             contains_uassets: has_uassets,
                             ..Default::default()
                         };
@@ -324,7 +301,7 @@ fn find_mods_from_archive(path: &str) -> Vec<InstallableMod> {
                         iostore: false,
                         is_archived: false,
                         editing: false,
-                        compression: Oodle,
+                        compression: "Oodle".to_string(),
                         contains_uassets: has_uassets,
                         ..Default::default()
                     };
@@ -395,35 +372,24 @@ fn map_to_mods_internal(paths: &[PathBuf]) -> Vec<InstallableMod> {
                     modtype = get_current_pak_characteristics(files.clone());
                     has_uassets = contains_uasset_files(&files);
                     
-                    // Try to open PAK for reader (optional - may fail for obfuscated mods or missing files)
-                    pak = File::open(path.clone()).ok().and_then(|f| {
-                        repak::PakBuilder::new()
-                            .key(AES_KEY.clone().0)
-                            .reader(&mut BufReader::new(f))
-                            .ok()
-                    });
+                    pak = uasset_toolkit::list_pak_files(
+                        path.to_str().unwrap_or_default(),
+                        Some(AES_KEY_HEX),
+                    ).ok().filter(|f| !f.is_empty());
                 } else {
-                    let file = File::open(path.clone()).map_err(|e| {
-                        error!("Cannot open PAK file {}: {}", path.display(), e);
-                        repak::Error::Other(format!("Cannot open file: {}", e))
-                    })?;
-                    let builder = repak::PakBuilder::new()
-                        .key(AES_KEY.clone().0)
-                        .reader(&mut BufReader::new(file));
-                    match builder {
-                        Ok(builder) => {
-                            pak = Some(builder.clone());
-                            
-                            let files = builder.files();
+                    match uasset_toolkit::list_pak_files(
+                        path.to_str().unwrap_or_default(),
+                        Some(AES_KEY_HEX),
+                    ) {
+                        Ok(files) => {
                             len = files.len();
-                            
                             modtype = get_current_pak_characteristics(files.clone());
                             has_uassets = contains_uasset_files(&files);
-                            
+                            pak = if files.is_empty() { None } else { Some(files) };
                         }
                         Err(e) => {
                             error!("Error reading pak file: {}", e);
-                            return Err(e);
+                            return None;
                         }
                     }
                 }
@@ -431,7 +397,7 @@ fn map_to_mods_internal(paths: &[PathBuf]) -> Vec<InstallableMod> {
 
             if is_dir {
                 let mut files = vec![];
-                collect_files(&mut files, path)?;
+                collect_files(&mut files, path).ok();
                 let files = files
                     .iter()
                     .map(|s| s.to_str().unwrap().to_string())
@@ -472,7 +438,7 @@ fn map_to_mods_internal(paths: &[PathBuf]) -> Vec<InstallableMod> {
             let is_audio_or_movies = modtype.contains("Audio") || modtype.contains("Movies");
             let should_repak = !is_dir && !is_iostore && !is_audio_or_movies;
             
-            Ok(InstallableMod {
+            Some(InstallableMod {
                 mod_name: path.file_stem().unwrap().to_str().unwrap().to_string(),
                 mod_type: modtype,
                 repak: should_repak,
@@ -488,7 +454,7 @@ fn map_to_mods_internal(paths: &[PathBuf]) -> Vec<InstallableMod> {
                 ..Default::default()
             })
         })
-        .filter_map(|x: Result<InstallableMod, repak::Error>| x.ok())
+        .filter_map(|x| x)
         .filter(|x| !x.is_archived)
         .collect::<Vec<_>>();
 

@@ -109,6 +109,7 @@ pub async fn detect_asset_class(
         output_path: None,
         filter: None,
         mount_point: None,
+        base_path: None,
     };
     
     let response = run_vfx_uat_request(tool_path, &request).await?;

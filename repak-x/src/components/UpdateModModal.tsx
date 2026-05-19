@@ -14,7 +14,7 @@ type ModRecord = {
 type UpdateModModalProps = {
     isOpen: boolean
     onClose: () => void
-    onConfirm: (preserveName: boolean) => void
+    onConfirm: (preserveName: boolean, obfuscate: boolean) => void
     oldMod: ModRecord | null
     newSourcePath: string | null
     initialObfuscate?: boolean | null
@@ -97,13 +97,9 @@ export default function UpdateModModal({ isOpen, onClose, onConfirm, oldMod, new
                                     size="md"
                                     color="primary"
                                     checked={obfuscate}
-                                    onChange={async (value) => {
-                                        try {
-                                            await invoke('set_obfuscate', { enabled: value })
-                                            setObfuscate(value)
-                                        } catch (e) {
-                                            console.error('Failed to set obfuscation:', e)
-                                        }
+                                    onChange={(value) => {
+                                        // Per-update obfuscate; do NOT mutate global state
+                                        setObfuscate(value)
                                     }}
                                     className={`install-toggle obfuscate-toggle ${obfuscate ? 'active' : ''}`}
                                     title="Encrypts IoStore with game's AES key to block FModel extraction"
@@ -145,7 +141,7 @@ export default function UpdateModModal({ isOpen, onClose, onConfirm, oldMod, new
                             <button className="cancel-btn" onClick={onClose}>Cancel</button>
                             <button
                                 className="btn-install"
-                                onClick={() => onConfirm(preserveName)}
+                                onClick={() => onConfirm(preserveName, obfuscate)}
                                 autoFocus
                             >
                                 Update Mod

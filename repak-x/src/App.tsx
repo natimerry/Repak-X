@@ -1045,7 +1045,7 @@ function App() {
     }
   }
 
-  const handleConfirmUpdate = async (preserveName: boolean) => {
+  const handleConfirmUpdate = async (preserveName: boolean, obfuscate: boolean) => {
     const { mod, newSourcePath } = updateModState
     if (!mod || !newSourcePath) return
 
@@ -1060,7 +1060,8 @@ function App() {
       const result = await invoke('update_mod', {
         oldModPath: mod.path,
         newModSource: newSourcePath,
-        preserveName: preserveName
+        preserveName: preserveName,
+        obfuscate: obfuscate
       })
 
       console.log('Update result:', result)

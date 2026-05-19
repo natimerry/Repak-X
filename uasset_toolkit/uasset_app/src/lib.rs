@@ -372,26 +372,58 @@ impl SyncToolkit {
         let request = UAssetRequest::CreateModIoStore {
             output_path: output_path.to_string(),
             input_dir: input_dir.to_string(),
+            input_pak: None,
             mount_point: mount_point.map(|s| s.to_string()),
             compress,
             aes_key: aes_key.map(|s| s.to_string()),
             parallel,
             obfuscate,
         };
-        
+
         let response = self.send_request(&request)?;
-        
+
         if !response.success {
             anyhow::bail!("Failed to create mod IoStore: {}", response.message);
         }
-        
+
         let data = response.data.unwrap_or(serde_json::json!({}));
         let utoc_path = data.get("utoc_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let ucas_path = data.get("ucas_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let pak_path = data.get("pak_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let converted_count = data.get("converted_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
         let file_count = data.get("file_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-        
+
+        Ok(IoStoreResult { utoc_path, ucas_path, pak_path, converted_count, file_count })
+    }
+
+    /// Create a mod IoStore bundle directly from a PAK file (extracts internally)
+    pub fn create_mod_iostore_from_pak(&self, output_path: &str, input_pak: &str, mount_point: Option<&str>, compress: Option<bool>, aes_key: Option<&str>, parallel: bool, obfuscate: bool) -> Result<IoStoreResult> {
+        let request = UAssetRequest::CreateModIoStore {
+            output_path: output_path.to_string(),
+            input_dir: String::new(),  // Not used when input_pak is set
+            input_pak: Some(input_pak.to_string()),
+            mount_point: mount_point.map(|s| s.to_string()),
+            compress,
+            aes_key: aes_key.map(|s| s.to_string()),
+            parallel,
+            obfuscate,
+        };
+
+        log::info!("[SyncToolkit] Creating IoStore from PAK: {} -> {}", input_pak, output_path);
+        let response = self.send_request(&request)?;
+
+        if !response.success {
+            anyhow::bail!("Failed to create mod IoStore from PAK: {}", response.message);
+        }
+
+        let data = response.data.unwrap_or(serde_json::json!({}));
+        let utoc_path = data.get("utoc_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let ucas_path = data.get("ucas_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let pak_path = data.get("pak_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let converted_count = data.get("converted_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let file_count = data.get("file_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+
+        log::info!("[SyncToolkit] IoStore created: utoc={}, converted={}", utoc_path, converted_count);
         Ok(IoStoreResult { utoc_path, ucas_path, pak_path, converted_count, file_count })
     }
 }
@@ -495,7 +527,7 @@ pub enum UAssetRequest {
     #[serde(rename = "extract_script_objects")]
     ExtractScriptObjects { file_path: String, output_path: String },
     #[serde(rename = "create_mod_iostore")]
-    CreateModIoStore { output_path: String, input_dir: String, mount_point: Option<String>, compress: Option<bool>, aes_key: Option<String>, #[serde(default)] parallel: bool, #[serde(default)] obfuscate: bool },
+    CreateModIoStore { output_path: String, input_dir: String, input_pak: Option<String>, mount_point: Option<String>, compress: Option<bool>, aes_key: Option<String>, #[serde(default)] parallel: bool, #[serde(default)] obfuscate: bool },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -661,6 +693,22 @@ pub fn create_mod_iostore(
     toolkit.create_mod_iostore(output_path, input_dir, mount_point, compress, aes_key, parallel, obfuscate)
 }
 
+/// Create mod IoStore directly from a PAK file (extracts internally in C# tool)
+/// This is more efficient than extract_pak_all + create_mod_iostore as it avoids
+/// writing to a temp directory on the Rust side.
+pub fn create_mod_iostore_from_pak(
+    output_path: &str,
+    input_pak: &str,
+    mount_point: Option<&str>,
+    compress: Option<bool>,
+    aes_key: Option<&str>,
+    parallel: bool,
+    obfuscate: bool,
+) -> Result<IoStoreResult> {
+    let toolkit = get_global_toolkit()?;
+    toolkit.create_mod_iostore_from_pak(output_path, input_pak, mount_point, compress, aes_key, parallel, obfuscate)
+}
+
 /// Patch mesh materials
 pub fn patch_mesh(file_path: &str, uexp_path: &str) -> Result<()> {
     let toolkit = get_global_toolkit()?;
@@ -679,6 +727,59 @@ pub fn patch_mesh(file_path: &str, uexp_path: &str) -> Result<()> {
 pub fn list_iostore_files(file_path: &str, aes_key: Option<&str>) -> Result<IoStoreListResult> {
     let toolkit = get_global_toolkit()?;
     toolkit.list_iostore_files(file_path, aes_key)
+}
+
+/// List all files inside a PAK file (using global singleton)
+pub fn list_pak_files(file_path: &str, aes_key: Option<&str>) -> Result<Vec<String>> {
+    let toolkit = get_global_toolkit()?;
+    let request = UAssetRequest::ListPakFiles {
+        file_path: file_path.to_string(),
+        aes_key: aes_key.map(|s| s.to_string()),
+    };
+    let response = toolkit.send_request(&request)?;
+    if !response.success {
+        anyhow::bail!("Failed to list PAK files: {}", response.message);
+    }
+    let data = response.data.unwrap_or(serde_json::json!({}));
+    let files = data.get("files")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+    Ok(files)
+}
+
+/// Extract all files from a PAK to a directory (using global singleton)
+pub fn extract_pak_all(file_path: &str, output_path: &str, aes_key: Option<&str>) -> Result<usize> {
+    let toolkit = get_global_toolkit()?;
+    let request = UAssetRequest::ExtractPakAll {
+        file_path: file_path.to_string(),
+        output_path: output_path.to_string(),
+        aes_key: aes_key.map(|s| s.to_string()),
+    };
+    let response = toolkit.send_request(&request)?;
+    if !response.success {
+        anyhow::bail!("Failed to extract PAK: {}", response.message);
+    }
+    let data = response.data.unwrap_or(serde_json::json!({}));
+    let count = data.get("extracted_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    Ok(count)
+}
+
+/// Create a PAK file from a list of files (using global singleton)
+pub fn create_pak(output_path: &str, file_paths: Vec<(String, String)>, mount_point: Option<&str>, path_hash_seed: Option<u64>, aes_key: Option<&str>) -> Result<()> {
+    let toolkit = get_global_toolkit()?;
+    let request = UAssetRequest::CreatePak {
+        output_path: output_path.to_string(),
+        file_paths: file_paths.into_iter().map(|(rel, abs)| format!("{}={}", rel, abs)).collect(),
+        mount_point: mount_point.map(|s| s.to_string()),
+        path_hash_seed,
+        aes_key: aes_key.map(|s| s.to_string()),
+    };
+    let response = toolkit.send_request(&request)?;
+    if !response.success {
+        anyhow::bail!("Failed to create PAK: {}", response.message);
+    }
+    Ok(())
 }
 
 /// IoStore listing result
