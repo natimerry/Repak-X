@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use crate::install_mod::install_mod_logic::pak_files::repak_dir;
+#[allow(unused_imports)]
 use crate::install_mod::InstallableMod;
 use crate::utils::collect_files;
 use log::{debug, error, info, warn};
@@ -17,7 +18,7 @@ pub fn convert_to_iostore_directory(
     mod_dir: PathBuf,
     to_pak_dir: PathBuf,
     packed_files_count: &AtomicI32,
-) -> Result<(), repak::Error> {
+) -> Result<(), String> {
     let mod_type = pak.mod_type.clone();
 
     // Check for force_legacy_pak flag - skip IoStore conversion entirely
@@ -26,13 +27,15 @@ pub fn convert_to_iostore_directory(
             "Force Legacy PAK enabled for '{}'. Skipping IoStore conversion.",
             pak.mod_name
         );
-        repak_dir(pak, to_pak_dir, mod_dir, packed_files_count)?;
+        repak_dir(pak, to_pak_dir, mod_dir, packed_files_count)
+            .map_err(|e| format!("repak_dir failed: {}", e))?;
         return Ok(());
     }
 
     if mod_type == "Audio" || mod_type == "Movies" {
         debug!("{} mod detected. Not creating iostore packages", mod_type);
-        repak_dir(pak, to_pak_dir, mod_dir, packed_files_count)?;
+        repak_dir(pak, to_pak_dir, mod_dir, packed_files_count)
+            .map_err(|e| format!("repak_dir failed: {}", e))?;
         return Ok(());
     }
 
@@ -43,7 +46,8 @@ pub fn convert_to_iostore_directory(
     utoc_name.push_str(".utoc");
 
     let mut paths = vec![];
-    collect_files(&mut paths, &to_pak_dir)?;
+    collect_files(&mut paths, &to_pak_dir)
+        .map_err(|e| format!("Failed to collect files: {}", e))?;
 
     // SerializeSize fixing, Skeletal Mesh patching, and texture processing are all
     // handled automatically by UAssetTool during IoStore conversion (ZenConverter.BuildExportMapWithRecalculatedSizes).
@@ -150,12 +154,7 @@ pub fn convert_to_iostore_directory(
         pak.parallel_processing, // Toggle: false=50%, true=75% CPU threads
         pak.obfuscate,           // Encrypt with game's AES key to block FModel extraction
     )
-    .map_err(|e| {
-        repak::Error::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("IoStore conversion failed: {}", e),
-        ))
-    })?;
+    .map_err(|e| format!("IoStore conversion failed: {}", e))?;
 
     info!("IoStore conversion complete:");
     info!("  UTOC: {}", result.utoc_path);

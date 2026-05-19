@@ -757,11 +757,7 @@ async fn parse_dropped_files(
     window: Window
 ) -> Result<Vec<InstallableModInfo>, String> {
     use crate::utils::get_current_pak_characteristics;
-    use repak::PakBuilder;
-    use repak::utils::AesKey;
-    use std::str::FromStr;
     use std::fs::File;
-    use std::io::BufReader;
     
     // Emit start detection log
     let _ = window.emit("install_log", "[Detection] Starting UAssetAPI detection...");
@@ -969,12 +965,12 @@ async fn parse_dropped_files(
                                     use crate::utoc_utils::read_utoc;
                                     let utoc_files: Vec<String> = read_utoc(&utoc).iter().map(|e| e.file_path.clone()).collect();
                                     if utoc_files.is_empty() { None } else { Some(utoc_files) }
-                                } else if let Ok(file) = File::open(pak_file_path) {
-                                    if let Ok(aes_key) = AesKey::from_str("0C263D8C22DCB085894899C3A3796383E9BF9DE0CBFB08C9BF2DEF2E84F29D74") {
-                                        let mut reader = BufReader::new(file);
-                                        PakBuilder::new().key(aes_key.0).reader(&mut reader).ok().map(|pak| pak.files())
-                                    } else { None }
-                                } else { None };
+                                } else {
+                                    uasset_toolkit::list_pak_files(
+                                        pak_file_path.to_str().unwrap_or_default(),
+                                        Some(crate::install_mod::AES_KEY_HEX),
+                                    ).ok().filter(|f| !f.is_empty())
+                                };
                                 
                                 let mut pak_mod_type = "Archive".to_string();
                                 let mut pak_has_uassets = false;
@@ -1027,12 +1023,12 @@ async fn parse_dropped_files(
                                     .map(|entry| entry.file_path.clone())
                                     .collect();
                                 if utoc_files.is_empty() { None } else { Some(utoc_files) }
-                            } else if let Ok(file) = File::open(entry_path) {
-                                if let Ok(aes_key) = AesKey::from_str("0C263D8C22DCB085894899C3A3796383E9BF9DE0CBFB08C9BF2DEF2E84F29D74") {
-                                    let mut reader = BufReader::new(file);
-                                    PakBuilder::new().key(aes_key.0).reader(&mut reader).ok().map(|pak| pak.files())
-                                } else { None }
-                            } else { None };
+                            } else {
+                                uasset_toolkit::list_pak_files(
+                                    entry_path.to_str().unwrap_or_default(),
+                                    Some(crate::install_mod::AES_KEY_HEX),
+                                ).ok().filter(|f| !f.is_empty())
+                            };
                             
                             if let Some(files) = files {
                                         
@@ -1064,42 +1060,28 @@ async fn parse_dropped_files(
                                         // Extract to temp directory for UAssetAPI analysis
                                         let mut extracted_paths: Vec<String> = Vec::new();
                                         let uasset_temp_dir = tempfile::tempdir().ok();
-                                        let aes_key_for_extraction = AesKey::from_str("0C263D8C22DCB085894899C3A3796383E9BF9DE0CBFB08C9BF2DEF2E84F29D74").unwrap();
                                         
                                         if let Some(ref uasset_temp) = uasset_temp_dir {
-                                            use rayon::prelude::*;
-                                            use std::sync::Mutex;
-                                            
-                                            let extracted = Mutex::new(Vec::new());
-                                            let pak_path = entry_path.clone();
-                                            
-                                            // Parallel extraction
-                                            files_to_extract.par_iter().for_each(|internal_path| {
-                                                if let Ok(file) = File::open(&pak_path) {
-                                                    let mut reader = BufReader::new(file);
-                                                    if let Ok(pak) = PakBuilder::new().key(aes_key_for_extraction.0.clone()).reader(&mut reader) {
-                                                        // Use just the filename to preserve .uasset/.uexp pairing
-                                                        let filename = std::path::Path::new(internal_path.as_str())
-                                                            .file_name()
-                                                            .and_then(|n| n.to_str())
-                                                            .unwrap_or(internal_path);
-                                                        let dest_path = uasset_temp.path().join(filename);
-                                                        
-                                                        if let Ok(extract_file) = File::open(&pak_path) {
-                                                            let mut extract_reader = BufReader::new(extract_file);
-                                                            if let Ok(data) = pak.get(internal_path, &mut extract_reader) {
-                                                                if let Ok(_) = std::fs::write(&dest_path, data) {
-                                                                    if internal_path.to_lowercase().ends_with(".uasset") {
-                                                                        extracted.lock().unwrap().push(dest_path.to_string_lossy().to_string());
-                                                                    }
-                                                                }
-                                                            }
+                                            // Extract PAK to temp dir using UAssetTool
+                                            let _ = uasset_toolkit::extract_pak_all(
+                                                entry_path.to_str().unwrap_or_default(),
+                                                uasset_temp.path().to_str().unwrap_or_default(),
+                                                Some(crate::install_mod::AES_KEY_HEX),
+                                            );
+                                            // Collect only extracted .uasset files matching our filter
+                                            use walkdir::WalkDir;
+                                            for entry in WalkDir::new(uasset_temp.path()).into_iter().filter_map(|e| e.ok()) {
+                                                let p = entry.path();
+                                                if p.extension().and_then(|e| e.to_str()) == Some("uasset") {
+                                                    if let Some(fname) = p.file_name().and_then(|n| n.to_str()) {
+                                                        let fl = fname.to_lowercase();
+                                                        if fl.starts_with("sk_") || fl.starts_with("sm_") || fl.starts_with("t_") {
+                                                            extracted_paths.push(p.to_string_lossy().to_string());
                                                         }
                                                     }
                                                 }
-                                            });
+                                            }
                                             
-                                            extracted_paths = extracted.into_inner().unwrap();
                                             let _ = window.emit("install_log", format!("[Detection] Extracted {} uasset files for UAssetAPI", extracted_paths.len()));
                                         }
                                         
@@ -1217,24 +1199,22 @@ async fn parse_dropped_files(
                 // For IoStore, read from utoc directly (works with obfuscated mods);
                 // otherwise open PAK with AES key
                 let mod_type = {
-                    let files_and_key: Option<(Vec<String>, Option<repak::utils::AesKey>)> = if is_iostore {
+                    let files_and_key: Option<Vec<String>> = if is_iostore {
                         use crate::utoc_utils::read_utoc;
                         let _ = window.emit("install_log", "[Detection] Reading IoStore .utoc file for accurate file list");
                         let utoc_files: Vec<String> = read_utoc(&utoc_path)
                             .iter()
                             .map(|entry| entry.file_path.clone())
                             .collect();
-                        if utoc_files.is_empty() { None } else { Some((utoc_files, None)) }
-                    } else if let Ok(file) = File::open(&path) {
-                        if let Ok(aes_key) = AesKey::from_str("0C263D8C22DCB085894899C3A3796383E9BF9DE0CBFB08C9BF2DEF2E84F29D74") {
-                            let aes_key_for_extraction = aes_key.clone();
-                            let mut reader = BufReader::new(file);
-                            PakBuilder::new().key(aes_key.0).reader(&mut reader).ok().map(|pak| (pak.files(), Some(aes_key_for_extraction)))
-                        } else { None }
-                    } else { None };
+                        if utoc_files.is_empty() { None } else { Some(utoc_files) }
+                    } else {
+                        uasset_toolkit::list_pak_files(
+                            path.to_str().unwrap_or_default(),
+                            Some(crate::install_mod::AES_KEY_HEX),
+                        ).ok().filter(|f| !f.is_empty())
+                    };
                     
-                    if let Some((files, aes_key_opt)) = files_and_key {
-                        let aes_key_for_extraction = aes_key_opt.unwrap_or_else(|| AesKey::from_str("0C263D8C22DCB085894899C3A3796383E9BF9DE0CBFB08C9BF2DEF2E84F29D74").unwrap());
+                    if let Some(files) = files_and_key {
                             
                             // Use detailed characteristics (same as get_mod_details)
                             use crate::utils::get_pak_characteristics_detailed;
@@ -1266,39 +1246,23 @@ async fn parse_dropped_files(
                             let uasset_temp_dir = tempfile::tempdir().ok();
                             
                             if let Some(ref uasset_temp) = uasset_temp_dir {
-                                use rayon::prelude::*;
-                                use std::sync::Mutex;
-                                
-                                let extracted = Mutex::new(Vec::new());
-                                let pak_path = path.clone();
-                                
-                                // Parallel extraction
-                                files_to_extract.par_iter().for_each(|internal_path| {
-                                    // Each thread opens its own file handle
-                                    if let Ok(file) = File::open(&pak_path) {
-                                        let mut reader = BufReader::new(file);
-                                        if let Ok(pak) = PakBuilder::new().key(aes_key_for_extraction.0.clone()).reader(&mut reader) {
-                                            // Sanitize filename for filesystem
-                                            let safe_name = internal_path.replace("/", "_").replace("\\", "_");
-                                            let dest_path = uasset_temp.path().join(&safe_name);
-                                            
-                                            // Re-open file for extraction (pak.get needs mutable reader)
-                                            if let Ok(extract_file) = File::open(&pak_path) {
-                                                let mut extract_reader = BufReader::new(extract_file);
-                                                // Extract file
-                                                if let Ok(data) = pak.get(internal_path, &mut extract_reader) {
-                                                    if let Ok(_) = std::fs::write(&dest_path, data) {
-                                                        if internal_path.to_lowercase().ends_with(".uasset") {
-                                                            extracted.lock().unwrap().push(dest_path.to_string_lossy().to_string());
-                                                        }
-                                                    }
-                                                }
+                                let _ = uasset_toolkit::extract_pak_all(
+                                    path.to_str().unwrap_or_default(),
+                                    uasset_temp.path().to_str().unwrap_or_default(),
+                                    Some(crate::install_mod::AES_KEY_HEX),
+                                );
+                                use walkdir::WalkDir;
+                                for entry in WalkDir::new(uasset_temp.path()).into_iter().filter_map(|e| e.ok()) {
+                                    let p = entry.path();
+                                    if p.extension().and_then(|e| e.to_str()) == Some("uasset") {
+                                        if let Some(fname) = p.file_name().and_then(|n| n.to_str()) {
+                                            let fl = fname.to_lowercase();
+                                            if fl.starts_with("sk_") || fl.starts_with("sm_") || fl.starts_with("t_") {
+                                                extracted_paths.push(p.to_string_lossy().to_string());
                                             }
                                         }
                                     }
-                                });
-                                
-                                extracted_paths = extracted.into_inner().unwrap();
+                                }
                                 let _ = window.emit("install_log", format!("[Detection] Extracted {} uasset files for UAssetAPI", extracted_paths.len()));
                             }
                             
@@ -1381,6 +1345,9 @@ struct ModToInstall {
     /// Whether to include this mod in the installation (for multi-PAK selection)
     #[serde(default = "default_true")]
     enabled: bool,
+    /// Enable IoStore obfuscation for this install (per-mod, not global)
+    #[serde(default)]
+    obfuscate: bool,
 }
 
 fn default_true() -> bool { true }
@@ -1777,7 +1744,6 @@ async fn install_mods(
     let state_guard = state.lock().unwrap();
     let mod_directory = state_guard.game_path.clone();
     let parallel_processing = state_guard.parallel_processing;
-    let obfuscate = state_guard.obfuscate;
     drop(state_guard);
 
     if !mod_directory.exists() {
@@ -1880,6 +1846,7 @@ async fn install_mods(
             installable.repak = mod_to_install.to_repak;
             installable.force_legacy_pak = mod_to_install.force_legacy;
             installable.install_subfolder = mod_to_install.install_subfolder.clone();
+            installable.obfuscate = mod_to_install.obfuscate;
         } else {
             // No matching user settings found (common for archive-expanded mods)
             // IMPORTANT: Do NOT override repak or force_legacy_pak here!
@@ -1887,12 +1854,12 @@ async fn install_mods(
             // based on the actual PAK contents. Overriding them breaks IoStore conversion.
             if let Some(first_mod) = mods.first() {
                 installable.install_subfolder = first_mod.install_subfolder.clone();
+                installable.obfuscate = first_mod.obfuscate;
                 // repak and force_legacy_pak are intentionally NOT overridden
             }
         }
         
         installable.parallel_processing = parallel_processing;
-        installable.obfuscate = obfuscate;
     }
 
     // Use existing installation logic
@@ -3315,13 +3282,6 @@ async fn toggle_mod(
 
 #[tauri::command]
 async fn extract_pak_to_destination(mod_path: String, dest_path: String) -> Result<(), String> {
-    use crate::install_mod::install_mod_logic::pak_files::extract_pak_to_dir;
-    use crate::install_mod::InstallableMod;
-    use repak::PakBuilder;
-    use repak::utils::AesKey;
-    use std::str::FromStr;
-    use std::io::BufReader;
-    
     let pak_path = PathBuf::from(&mod_path);
     if !pak_path.exists() {
         return Err("Pak file not found".to_string());
@@ -3333,26 +3293,11 @@ async fn extract_pak_to_destination(mod_path: String, dest_path: String) -> Resu
     
     std::fs::create_dir_all(&to_create).map_err(|e| e.to_string())?;
     
-    // Open PAK
-    let file = File::open(&pak_path).map_err(|e| e.to_string())?;
-    let aes_key = AesKey::from_str("0C263D8C22DCB085894899C3A3796383E9BF9DE0CBFB08C9BF2DEF2E84F29D74")
-        .map_err(|e| e.to_string())?;
-        
-    let mut reader = BufReader::new(file);
-    let pak_reader = PakBuilder::new()
-        .key(aes_key.0)
-        .reader(&mut reader)
-        .map_err(|e| e.to_string())?;
-        
-    let installable_mod = InstallableMod {
-        mod_name: mod_name.clone(),
-        mod_type: "".to_string(),
-        reader: Option::from(pak_reader),
-        mod_path: pak_path.clone(),
-        ..Default::default()
-    };
-    
-    extract_pak_to_dir(&installable_mod, to_create).map_err(|e| e.to_string())?;
+    uasset_toolkit::extract_pak_all(
+        pak_path.to_str().unwrap_or_default(),
+        to_create.to_str().unwrap_or_default(),
+        Some(crate::install_mod::AES_KEY_HEX),
+    ).map_err(|e| e.to_string())?;
     
     Ok(())
 }
@@ -3541,26 +3486,12 @@ async fn extract_mod_assets_inner(mod_path: String, dest_path: String, window: W
         }
         "pak" => {
             // PAK extraction
-            use crate::install_mod::install_mod_logic::pak_files::extract_pak_to_dir;
-            use crate::install_mod::InstallableMod;
-            use repak::PakBuilder;
-            use repak::utils::AesKey;
-            use std::str::FromStr;
-            use std::io::BufReader;
+            let file_list = uasset_toolkit::list_pak_files(
+                path.to_str().unwrap_or_default(),
+                Some(crate::install_mod::AES_KEY_HEX),
+            ).unwrap_or_default();
+            let file_count = file_list.len();
             
-            let file = File::open(&path).map_err(|e| e.to_string())?;
-            let aes_key = AesKey::from_str("0C263D8C22DCB085894899C3A3796383E9BF9DE0CBFB08C9BF2DEF2E84F29D74")
-                .map_err(|e| e.to_string())?;
-            
-            let mut reader = BufReader::new(file);
-            let pak_reader = PakBuilder::new()
-                .key(aes_key.0)
-                .reader(&mut reader)
-                .map_err(|e| e.to_string())?;
-            
-            let file_count = pak_reader.files().len();
-            
-            // Emit start progress
             let _ = window.emit("extraction_progress", ExtractionProgress {
                 current_file: mod_name.clone(),
                 files_extracted: 0,
@@ -3569,15 +3500,11 @@ async fn extract_mod_assets_inner(mod_path: String, dest_path: String, window: W
                 status: "extracting".to_string(),
             });
             
-            let installable_mod = InstallableMod {
-                mod_name: mod_name.clone(),
-                mod_type: "".to_string(),
-                reader: Some(pak_reader),
-                mod_path: path.clone(),
-                ..Default::default()
-            };
-            
-            extract_pak_to_dir(&installable_mod, output_dir.clone()).map_err(|e| {
+            uasset_toolkit::extract_pak_all(
+                path.to_str().unwrap_or_default(),
+                output_dir.to_str().unwrap_or_default(),
+                Some(crate::install_mod::AES_KEY_HEX),
+            ).map_err(|e| {
                 let _ = window.emit("extraction_progress", ExtractionProgress {
                     current_file: mod_name.clone(),
                     files_extracted: 0,
@@ -3588,7 +3515,6 @@ async fn extract_mod_assets_inner(mod_path: String, dest_path: String, window: W
                 e.to_string()
             })?;
             
-            // Emit completion progress
             let _ = window.emit("extraction_progress", ExtractionProgress {
                 current_file: mod_name.clone(),
                 files_extracted: file_count,
@@ -3613,26 +3539,12 @@ async fn extract_mod_assets_inner(mod_path: String, dest_path: String, window: W
         }
         "bak_repak" => {
             // Disabled PAK file - extract it as a regular PAK
-            use crate::install_mod::install_mod_logic::pak_files::extract_pak_to_dir;
-            use crate::install_mod::InstallableMod;
-            use repak::PakBuilder;
-            use repak::utils::AesKey;
-            use std::str::FromStr;
-            use std::io::BufReader;
+            let file_list = uasset_toolkit::list_pak_files(
+                path.to_str().unwrap_or_default(),
+                Some(crate::install_mod::AES_KEY_HEX),
+            ).unwrap_or_default();
+            let file_count = file_list.len();
             
-            let file = File::open(&path).map_err(|e| e.to_string())?;
-            let aes_key = AesKey::from_str("0C263D8C22DCB085894899C3A3796383E9BF9DE0CBFB08C9BF2DEF2E84F29D74")
-                .map_err(|e| e.to_string())?;
-            
-            let mut reader = BufReader::new(file);
-            let pak_reader = PakBuilder::new()
-                .key(aes_key.0)
-                .reader(&mut reader)
-                .map_err(|e| e.to_string())?;
-            
-            let file_count = pak_reader.files().len();
-            
-            // Emit start progress
             let _ = window.emit("extraction_progress", ExtractionProgress {
                 current_file: mod_name.clone(),
                 files_extracted: 0,
@@ -3641,15 +3553,11 @@ async fn extract_mod_assets_inner(mod_path: String, dest_path: String, window: W
                 status: "extracting".to_string(),
             });
             
-            let installable_mod = InstallableMod {
-                mod_name: mod_name.clone(),
-                mod_type: "".to_string(),
-                reader: Some(pak_reader),
-                mod_path: path.clone(),
-                ..Default::default()
-            };
-            
-            extract_pak_to_dir(&installable_mod, output_dir.clone()).map_err(|e| {
+            uasset_toolkit::extract_pak_all(
+                path.to_str().unwrap_or_default(),
+                output_dir.to_str().unwrap_or_default(),
+                Some(crate::install_mod::AES_KEY_HEX),
+            ).map_err(|e| {
                 let _ = window.emit("extraction_progress", ExtractionProgress {
                     current_file: mod_name.clone(),
                     files_extracted: 0,
@@ -3660,7 +3568,6 @@ async fn extract_mod_assets_inner(mod_path: String, dest_path: String, window: W
                 e.to_string()
             })?;
             
-            // Emit completion progress
             let _ = window.emit("extraction_progress", ExtractionProgress {
                 current_file: mod_name.clone(),
                 files_extracted: file_count,
@@ -4134,8 +4041,6 @@ async fn recompress_mods(
     state: State<'_, Arc<Mutex<AppState>>>,
     window: Window,
 ) -> Result<RecompressResult, String> {
-    use repak::Compression;
-    use std::io::BufReader;
     
     let game_path = {
         let state = state.lock().unwrap();
@@ -4285,57 +4190,19 @@ async fn recompress_mods(
         };
         
         let original_size = std::fs::metadata(pak_path).map(|m| m.len()).unwrap_or(0);
+        drop(file);
         
-        let pak_reader = match repak::PakBuilder::new()
-            .key(install_mod::AES_KEY.clone().0)
-            .reader(&mut BufReader::new(&file))
-        {
-            Ok(reader) => reader,
-            Err(e) => {
-                error!("Failed to read PAK file {}: {}", pak_path.display(), e);
-                result.failed += 1;
-                result.details.push(RecompressDetail {
-                    mod_name,
-                    status: "failed".to_string(),
-                    original_size,
-                    new_size: None,
-                    error: Some(format!("Failed to parse PAK: {}", e)),
-                });
-                continue;
-            }
-        };
+        // For PAK files without IoStore - use uasset_toolkit to extract and recreate with Oodle
+        // First check if it already seems Oodle (heuristic: file size relative to content)
+        info!("Recompressing PAK: {}", mod_name);
         
-        // Check compression type
-        let compressions = pak_reader.compression();
-        let has_oodle = compressions.iter().any(|c| matches!(c, Compression::Oodle));
-        let is_uncompressed = compressions.is_empty();
-        
-        if has_oodle && !is_uncompressed {
-            // Already using Oodle compression
-            info!("Already Oodle compressed: {}", mod_name);
-            result.already_oodle += 1;
-            result.details.push(RecompressDetail {
-                mod_name,
-                status: "already_oodle".to_string(),
-                original_size,
-                new_size: None,
-                error: None,
-            });
-            continue;
-        }
-        
-        // Need to recompress this PAK
-        info!("Recompressing: {} (compression: {:?})", mod_name, compressions);
-        
-        // Emit progress for recompression
         let _ = window.emit("recompress_progress", serde_json::json!({
             "current": idx + 1,
             "total": pak_files.len(),
             "status": format!("Recompressing: {}", mod_name)
         }));
         
-        // Recompress the PAK file
-        match recompress_pak_file(pak_path, &pak_reader) {
+        match recompress_pak_file(pak_path) {
             Ok(new_size) => {
                 info!("Successfully recompressed: {} ({} -> {} bytes)", mod_name, original_size, new_size);
                 result.recompressed += 1;
@@ -4374,74 +4241,44 @@ async fn recompress_mods(
     Ok(result)
 }
 
-/// Recompress a single PAK file to use Oodle compression
-fn recompress_pak_file(pak_path: &Path, pak_reader: &repak::PakReader) -> Result<u64, String> {
-    use repak::{Compression, Version};
-    use std::io::{BufReader, BufWriter};
-    use tempfile::NamedTempFile;
+/// Recompress a single PAK file by extracting to temp dir and repacking via UAssetTool
+fn recompress_pak_file(pak_path: &Path) -> Result<u64, String> {
+    use tempfile::tempdir;
     
-    // Create a temporary file for the new PAK
-    let temp_file = NamedTempFile::new()
-        .map_err(|e| format!("Failed to create temp file: {}", e))?;
+    let temp_dir = tempdir().map_err(|e| format!("Failed to create temp dir: {}", e))?;
+    let temp_path = temp_dir.path();
     
-    let temp_path = temp_file.path().to_path_buf();
+    // Extract PAK to temp dir
+    uasset_toolkit::extract_pak_all(
+        pak_path.to_str().unwrap_or_default(),
+        temp_path.to_str().unwrap_or_default(),
+        Some(crate::install_mod::AES_KEY_HEX),
+    ).map_err(|e| format!("Failed to extract PAK for recompression: {}", e))?;
     
-    // Get PAK metadata
-    let mount_point = pak_reader.mount_point().to_string();
-    let path_hash_seed = pak_reader.path_hash_seed();
-    let files = pak_reader.files();
-    
-    // Create new PAK with Oodle compression
-    let output_file = File::create(&temp_path)
-        .map_err(|e| format!("Failed to create output file: {}", e))?;
-    
-    let builder = repak::PakBuilder::new()
-        .compression(vec![Compression::Oodle])
-        .key(install_mod::AES_KEY.clone().0);
-    
-    let mut pak_writer = builder.writer(
-        BufWriter::new(output_file),
-        Version::V11,
-        mount_point,
-        path_hash_seed,
-    );
-    
-    let entry_builder = pak_writer.entry_builder();
-    
-    // Read source file
-    let source_file = File::open(pak_path)
-        .map_err(|e| format!("Failed to open source PAK: {}", e))?;
-    let mut source_reader = BufReader::new(source_file);
-    
-    // Copy all entries with Oodle compression
-    for file_path in &files {
-        let data = pak_reader.get(file_path, &mut source_reader)
-            .map_err(|e| format!("Failed to read entry {}: {}", file_path, e))?;
-        
-        // Build entry with compression enabled
-        let entry = entry_builder
-            .build_entry(true, data, file_path)
-            .map_err(|e| format!("Failed to build entry {}: {}", file_path, e))?;
-        
-        pak_writer.write_entry(file_path.to_string(), entry)
-            .map_err(|e| format!("Failed to write entry {}: {}", file_path, e))?;
+    // Collect extracted files
+    let mut file_entries: Vec<(String, String)> = Vec::new();
+    for entry in WalkDir::new(temp_path).into_iter().filter_map(|e| e.ok()) {
+        let p = entry.path();
+        if p.is_file() {
+            if let (Some(rel), Some(abs)) = (
+                p.strip_prefix(temp_path).ok().and_then(|r| r.to_str()).map(|s| s.replace('\\', "/")),
+                p.to_str().map(|s| s.to_string())
+            ) {
+                file_entries.push((rel, abs));
+            }
+        }
     }
     
-    // Finalize the PAK (write_index consumes pak_writer)
-    let _writer = pak_writer.write_index()
-        .map_err(|e| format!("Failed to write index: {}", e))?;
+    // Repack with UAssetTool (uses Oodle by default)
+    uasset_toolkit::create_pak(
+        pak_path.to_str().unwrap_or_default(),
+        file_entries,
+        Some("../../../"),
+        None,
+        Some(crate::install_mod::AES_KEY_HEX),
+    ).map_err(|e| format!("Failed to repack: {}", e))?;
     
-    // Get new file size
-    let new_size = std::fs::metadata(&temp_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
-    
-    // Replace original file with recompressed version
-    std::fs::copy(&temp_path, pak_path)
-        .map_err(|e| format!("Failed to replace original PAK: {}", e))?;
-    
-    // Clean up temp file (it will be deleted when temp_file is dropped)
-    
+    let new_size = std::fs::metadata(pak_path).map(|m| m.len()).unwrap_or(0);
     Ok(new_size)
 }
 
@@ -5654,12 +5491,6 @@ async fn get_mod_details(
     _detect_blueprint: Option<bool>,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<ModDetails, String> {
-    use repak::PakBuilder;
-    use repak::utils::AesKey;
-    use std::str::FromStr;
-    use std::fs::File;
-    use std::io::BufReader;
-    
     let path = PathBuf::from(&mod_path);
     
     info!("Getting details for mod: {}", path.display());
@@ -5703,20 +5534,10 @@ async fn get_mod_details(
             .map(|entry| entry.file_path.clone())
             .collect()
     } else {
-        // For regular PAK, open with AES key
-        let aes_key = AesKey::from_str("0C263D8C22DCB085894899C3A3796383E9BF9DE0CBFB08C9BF2DEF2E84F29D74")
-            .map_err(|e| format!("Failed to create AES key: {}", e))?;
-        
-        let file = File::open(&path)
-            .map_err(|e| format!("Failed to open PAK file: {}", e))?;
-        
-        let mut reader = BufReader::new(file);
-        let pak = PakBuilder::new()
-            .key(aes_key.0)
-            .reader(&mut reader)
-            .map_err(|e| format!("Failed to read PAK (bad AES key or corrupted file): {}", e))?;
-        
-        pak.files()
+        uasset_toolkit::list_pak_files(
+            path.to_str().unwrap_or_default(),
+            Some(crate::install_mod::AES_KEY_HEX),
+        ).map_err(|e| format!("Failed to read PAK: {}", e))?
     };
     
     let file_count = files.len();
@@ -5823,11 +5644,6 @@ struct SingleModConflict {
 
 #[tauri::command]
 async fn check_mod_clashes(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<ModClash>, String> {
-    use repak::PakBuilder;
-    use repak::utils::AesKey;
-    use std::str::FromStr;
-    use std::fs::File;
-    use std::io::BufReader;
     use std::collections::HashMap;
     
     let state = state.lock().unwrap();
@@ -5838,10 +5654,6 @@ async fn check_mod_clashes(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec
     if !game_path.exists() {
         return Err("Game path does not exist".to_string());
     }
-
-    // Get AES key
-    let aes_key = AesKey::from_str("0C263D8C22DCB085894899C3A3796383E9BF9DE0CBFB08C9BF2DEF2E84F29D74")
-        .map_err(|e| format!("Failed to create AES key: {}", e))?;
 
     // Structure to hold mod info for clash detection
     #[derive(Clone)]
@@ -5893,26 +5705,6 @@ async fn check_mod_clashes(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec
             }
         }
 
-        // Open PAK file to analyze contents
-        let file = match File::open(&path) {
-            Ok(f) => f,
-            Err(e) => {
-                warn!("Failed to open PAK file {:?}: {}", path, e);
-                continue;
-            }
-        };
-
-        let mut reader = BufReader::new(file);
-        let pak = match PakBuilder::new()
-            .key(aes_key.0.clone())
-            .reader(&mut reader) {
-            Ok(p) => p,
-            Err(e) => {
-                warn!("Failed to read PAK {:?}: {}", path, e);
-                continue;
-            }
-        };
-
         // Check if it's IoStore
         let mut utoc_path = path.to_path_buf();
         utoc_path.set_extension("utoc");
@@ -5926,7 +5718,16 @@ async fn check_mod_clashes(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec
                 .map(|entry| entry.file_path.clone())
                 .collect()
         } else {
-            pak.files()
+            match uasset_toolkit::list_pak_files(
+                path.to_str().unwrap_or_default(),
+                Some(crate::install_mod::AES_KEY_HEX),
+            ) {
+                Ok(f) => f,
+                Err(e) => {
+                    warn!("Failed to read PAK {:?}: {}", path, e);
+                    continue;
+                }
+            }
         };
 
 
@@ -6035,11 +5836,6 @@ async fn check_single_mod_conflicts(
     mod_path: String,
     state: State<'_, Arc<Mutex<AppState>>>
 ) -> Result<Vec<SingleModConflict>, String> {
-    use repak::PakBuilder;
-    use repak::utils::AesKey;
-    use std::str::FromStr;
-    use std::fs::File;
-    use std::io::BufReader;
     use std::collections::HashSet;
     
     let target_path = PathBuf::from(&mod_path);
@@ -6058,9 +5854,6 @@ async fn check_single_mod_conflicts(
     }
     
     info!("Checking conflicts for mod: {}", target_path.display());
-    
-    let aes_key = AesKey::from_str("0C263D8C22DCB085894899C3A3796383E9BF9DE0CBFB08C9BF2DEF2E84F29D74")
-        .map_err(|e| format!("Failed to create AES key: {}", e))?;
     
     // Helper to calculate priority from filename
     fn calculate_priority(path: &Path) -> usize {
@@ -6085,15 +5878,8 @@ async fn check_single_mod_conflicts(
         priority
     }
     
-    // Helper to get files from a PAK
-    fn get_pak_files(path: &Path, aes_key: &AesKey) -> Result<Vec<String>, String> {
-        let file = File::open(path).map_err(|e| format!("Failed to open PAK: {}", e))?;
-        let mut reader = BufReader::new(file);
-        let pak = PakBuilder::new()
-            .key(aes_key.0.clone())
-            .reader(&mut reader)
-            .map_err(|e| format!("Failed to read PAK: {}", e))?;
-        
+    // Helper to get files from a PAK or IoStore
+    fn get_pak_files(path: &Path) -> Result<Vec<String>, String> {
         let mut utoc_path = path.to_path_buf();
         utoc_path.set_extension("utoc");
         
@@ -6104,13 +5890,16 @@ async fn check_single_mod_conflicts(
                 .map(|entry| entry.file_path.clone())
                 .collect())
         } else {
-            Ok(pak.files())
+            uasset_toolkit::list_pak_files(
+                path.to_str().unwrap_or_default(),
+                Some(crate::install_mod::AES_KEY_HEX),
+            ).map_err(|e| format!("Failed to read PAK: {}", e))
         }
     }
     
     // Get target mod info
     let target_priority = calculate_priority(&target_path);
-    let target_files: HashSet<String> = get_pak_files(&target_path, &aes_key)?
+    let target_files: HashSet<String> = get_pak_files(&target_path)?
         .into_iter()
         .collect();
     
@@ -6141,7 +5930,7 @@ async fn check_single_mod_conflicts(
         }
         
         // Get this mod's files
-        let other_files: HashSet<String> = match get_pak_files(path, &aes_key) {
+        let other_files: HashSet<String> = match get_pak_files(path) {
             Ok(files) => files.into_iter().collect(),
             Err(e) => {
                 warn!("Failed to read mod {:?}: {}", path, e);

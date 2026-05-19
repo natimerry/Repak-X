@@ -36,6 +36,9 @@ pub struct VfxUatRequest<'a> {
     pub filter: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mount_point: Option<String>,
+    /// Base path for preserving relative directory structure in batch output
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_path: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -434,128 +437,70 @@ pub async fn convert_uassets_to_json(
     find_uasset_paths(Path::new(input_dir), &mut uasset_paths)?;
 
     vfx_debug(&format!(
-        "convert_uassets_to_json (interactive)\n  input_dir: {}\n  output_dir: {}\n  usmap: {}\n  discovered_uasset_files: {}",
+        "convert_uassets_to_json (single batch)\n  input_dir: {}\n  output_dir: {}\n  usmap: {}\n  discovered_uasset_files: {}",
         input_dir, output_dir, usmap_path, uasset_paths.len()
     ));
 
-    let mut batches_by_relative_dir: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
-    for uasset_path in &uasset_paths {
-        let rel_path = uasset_path.strip_prefix(input_dir).map_err(|e| {
-            format!(
-                "[VFX] Failed to compute relative path for {}: {}",
-                uasset_path.display(),
-                e
-            )
-        })?;
-        let rel_parent = rel_path
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(PathBuf::new);
-        batches_by_relative_dir
-            .entry(rel_parent)
-            .or_default()
-            .push(uasset_path.to_string_lossy().to_string());
+    if uasset_paths.is_empty() {
+        vfx_warn("No .uasset files found to convert");
+        return Ok(Vec::new());
     }
 
-    vfx_debug(&format!("to_json batches: {}", batches_by_relative_dir.len()));
-
-    let mut success_count = 0usize;
-    let mut failures: Vec<String> = Vec::new();
-
-    for (idx, (rel_dir, batch_file_paths)) in batches_by_relative_dir.iter().enumerate() {
-        let batch_output_dir = Path::new(output_dir).join(rel_dir);
-        fs::create_dir_all(&batch_output_dir).map_err(|e| {
-            format!(
-                "[VFX] Failed to create batch output directory {}: {}",
-                batch_output_dir.display(),
-                e
-            )
-        })?;
-
-        let request = VfxUatRequest {
-            action: "to_json",
-            file_path: None,
-            file_paths: Some(batch_file_paths.clone()),
-            usmap_path: Some(usmap_path),
-            output_path: Some(batch_output_dir.to_string_lossy().to_string()),
-            filter: None,
-            mount_point: None,
-        };
-
-        if idx < 10 || idx % 25 == 0 {
-            vfx_debug(&format!(
-                "to_json batch {}/{}: rel_dir='{}', files={}",
-                idx + 1,
-                batches_by_relative_dir.len(),
-                rel_dir.display(),
-                batch_file_paths.len()
-            ));
-        }
-
-        match run_vfx_uat_request(tool_path, &request).await {
-            Ok(response) => {
-                if response.success {
-                    success_count += batch_file_paths.len();
-                } else {
-                    failures.push(format!(
-                        "batch rel_dir='{}' ({} files) => {}",
-                        rel_dir.display(),
-                        batch_file_paths.len(),
-                        response.message
-                    ));
-                }
-            }
-            Err(e) => {
-                failures.push(format!(
-                    "batch rel_dir='{}' ({} files) => {}",
-                    rel_dir.display(),
-                    batch_file_paths.len(),
-                    e
-                ));
-            }
-        }
-    }
+    // Flatten all file paths to strings
+    let file_paths: Vec<String> = uasset_paths
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
 
     vfx_info(&format!(
-        "to_json summary: success={}, failed={}, total={}",
-        success_count,
-        failures.len(),
-        uasset_paths.len()
+        "Converting {} files in single batch using base_path preservation",
+        file_paths.len()
     ));
 
-    if !failures.is_empty() {
-        vfx_warn("to_json failures (showing up to 10):");
-        for failure in failures.iter().take(10) {
-            vfx_warn(&format!("  [failure] {}", failure));
-        }
-        if failures.len() > 10 {
-            vfx_warn(&format!("  ... and {} more failures", failures.len() - 10));
-        }
+    // Single request with all files - base_path preserves directory structure
+    let request = VfxUatRequest {
+        action: "batch_to_json",
+        file_path: None,
+        file_paths: Some(file_paths.clone()),
+        usmap_path: Some(usmap_path),
+        output_path: Some(output_dir.to_string()),
+        filter: None,
+        mount_point: None,
+        base_path: Some(input_dir.to_string()),  // Preserves relative structure
+    };
 
-        progress.emit(VfxPipelineProgress {
-            stage: "Converting UAssets to JSON".to_string(),
-            step: 2,
-            current: 0,
-            total: 1,
-            message: format!(
-                "Warning: {} conversion(s) failed (continuing with successful outputs)",
-                failures.len()
-            ),
-        });
+    let mut converted_files = Vec::new();
+
+    match run_vfx_uat_request(tool_path, &request).await {
+        Ok(response) => {
+            if response.success {
+                // Extract converted file list from response if available
+                if let Some(data) = &response.data {
+                    if let Some(files) = data.get("files").and_then(|f| f.as_array()) {
+                        for f in files {
+                            if let Some(s) = f.as_str() {
+                                converted_files.push(s.to_string());
+                            }
+                        }
+                    }
+                }
+                vfx_info(&format!(
+                    "to_json summary: success={}, total={}",
+                    file_paths.len(),
+                    file_paths.len()
+                ));
+            } else {
+                vfx_error(&format!("Batch to_json failed: {}", response.message));
+                return Err(format!("Batch conversion failed: {}", response.message));
+            }
+        }
+        Err(e) => {
+            vfx_error(&format!("Batch to_json request failed: {}", e));
+            return Err(format!("Batch conversion failed: {}", e));
+        }
     }
 
-    let mut json_files = Vec::new();
-    find_json_strings(Path::new(output_dir), &mut json_files)?;
-
-    progress.emit(VfxPipelineProgress {
-        stage: "Converting UAssets to JSON".to_string(),
-        step: 2,
-        current: 1,
-        total: 1,
-        message: format!("Converted {} files", json_files.len()),
-    });
-
-    Ok(json_files)
+    Ok(converted_files)
 }
 
 pub async fn convert_json_to_uassets(
@@ -577,115 +522,56 @@ pub async fn convert_json_to_uassets(
         step: 7,
         current: 0,
         total: 1,
-        message: format!("Converting {} JSON files...", json_files.len()),
+        message: format!("Converting {} JSON files in single batch...", json_files.len()),
     });
 
     fs::create_dir_all(output_dir).map_err(|e| e.to_string())?;
 
     vfx_debug(&format!(
-        "convert_json_to_uassets (interactive)\n  input_dir: {}\n  output_dir: {}\n  usmap: {}\n  discovered_json_files: {}",
+        "convert_json_to_uassets (single batch)\n  input_dir: {}\n  output_dir: {}\n  usmap: {}\n  discovered_json_files: {}",
         input_dir, output_dir, usmap_path, json_files.len()
     ));
 
-    let mut batches_by_relative_dir: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
-    for json_path in &json_files {
-        let rel_path = json_path.strip_prefix(input_dir).map_err(|e| {
-            format!(
-                "[VFX] Failed to compute relative path for {}: {}",
-                json_path.display(),
-                e
-            )
-        })?;
-        let rel_parent = rel_path
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(PathBuf::new);
-        batches_by_relative_dir
-            .entry(rel_parent)
-            .or_default()
-            .push(json_path.to_string_lossy().to_string());
-    }
-
-    vfx_debug(&format!("from_json batches: {}", batches_by_relative_dir.len()));
-
-    let mut success_count = 0usize;
-    let mut failures: Vec<String> = Vec::new();
-
-    for (idx, (rel_dir, batch_file_paths)) in batches_by_relative_dir.iter().enumerate() {
-        let batch_output_dir = Path::new(output_dir).join(rel_dir);
-        fs::create_dir_all(&batch_output_dir).map_err(|e| {
-            format!(
-                "[VFX] Failed to create batch output directory {}: {}",
-                batch_output_dir.display(),
-                e
-            )
-        })?;
-
-        let request = VfxUatRequest {
-            action: "from_json",
-            file_path: None,
-            file_paths: Some(batch_file_paths.clone()),
-            usmap_path: Some(usmap_path),
-            output_path: Some(batch_output_dir.to_string_lossy().to_string()),
-            filter: None,
-            mount_point: None,
-        };
-
-        if idx < 10 || idx % 25 == 0 {
-            vfx_debug(&format!(
-                "from_json batch {}/{}: rel_dir='{}', files={}",
-                idx + 1,
-                batches_by_relative_dir.len(),
-                rel_dir.display(),
-                batch_file_paths.len()
-            ));
-        }
-
-        match run_vfx_uat_request(tool_path, &request).await {
-            Ok(response) => {
-                if response.success {
-                    success_count += batch_file_paths.len();
-                } else {
-                    failures.push(format!(
-                        "batch rel_dir='{}' ({} files) => {}",
-                        rel_dir.display(),
-                        batch_file_paths.len(),
-                        response.message
-                    ));
-                }
-            }
-            Err(e) => {
-                failures.push(format!(
-                    "batch rel_dir='{}' ({} files) => {}",
-                    rel_dir.display(),
-                    batch_file_paths.len(),
-                    e
-                ));
-            }
-        }
-    }
+    // Flatten all file paths to strings
+    let file_paths: Vec<String> = json_files
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
 
     vfx_info(&format!(
-        "from_json summary: success={}, failed={}, total={}",
-        success_count,
-        failures.len(),
-        json_files.len()
+        "Converting {} JSON files in single batch using base_path preservation",
+        file_paths.len()
     ));
 
-    if !failures.is_empty() {
-        vfx_warn("from_json failures (showing up to 10):");
-        for failure in failures.iter().take(10) {
-            vfx_warn(&format!("  [failure] {}", failure));
-        }
-        if failures.len() > 10 {
-            vfx_warn(&format!("  ... and {} more failures", failures.len() - 10));
-        }
+    // Single request with all files - base_path preserves directory structure
+    let request = VfxUatRequest {
+        action: "batch_from_json",
+        file_path: None,
+        file_paths: Some(file_paths.clone()),
+        usmap_path: Some(usmap_path),
+        output_path: Some(output_dir.to_string()),
+        filter: None,
+        mount_point: None,
+        base_path: Some(input_dir.to_string()),  // Preserves relative structure
+    };
 
-        return Err(format!(
-            "[VFX] from_json failed for {} of {} file(s)",
-            failures.len(),
-            json_files.len()
-        ));
+    match run_vfx_uat_request(tool_path, &request).await {
+        Ok(response) => {
+            if response.success {
+                vfx_info(&format!(
+                    "from_json summary: success={}, total={}",
+                    file_paths.len(),
+                    file_paths.len()
+                ));
+            } else {
+                vfx_error(&format!("Batch from_json failed: {}", response.message));
+                return Err(format!("Batch conversion failed: {}", response.message));
+            }
+        }
+        Err(e) => {
+            vfx_error(&format!("Batch from_json request failed: {}", e));
+            return Err(format!("Batch conversion failed: {}", e));
+        }
     }
 
     let mut uasset_paths = Vec::new();
@@ -940,6 +826,7 @@ pub async fn get_asset_classes(
             output_path: None,
             filter: None,
             mount_point: None,
+            base_path: None,
         };
         
         if batch_idx % 5 == 0 || batch_idx == batches.len() - 1 {
@@ -1049,6 +936,7 @@ pub async fn batch_detect_asset_types(
             output_path: None,
             filter: None,
             mount_point: None,
+            base_path: None,
         };
 
         vfx_debug(&format!(

@@ -33,7 +33,6 @@ log = "0.4.26"
 simplelog = "0.12.2"
 
 # Core dependencies
-repak = { path = "../repak" ,features = ["oodle", "encryption"] }
 hex.workspace = true
 sha2 = "0.10.9"
 serde = { version = "1.0.218", features = ["derive"] }

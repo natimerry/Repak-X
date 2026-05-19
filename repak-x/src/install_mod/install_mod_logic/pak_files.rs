@@ -1,15 +1,11 @@
-use crate::install_mod::{InstallableMod, AES_KEY};
+use crate::install_mod::{InstallableMod, AES_KEY_HEX};
 use crate::utils::collect_files;
-use log::{debug, info, error};
-use path_clean::PathClean;
+use log::{debug, info};
 use path_slash::PathExt;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
-use repak::Version;
 use std::fs;
-use std::fs::File;
-use std::io::{BufReader, BufWriter, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::AtomicI32;
 use tempfile::tempdir;
 use dirs;
@@ -17,89 +13,34 @@ use chrono;
 
 use super::iotoc::convert_to_iostore_directory;
 
-pub fn extract_pak_to_dir(pak: &InstallableMod, install_dir: PathBuf) -> Result<(), repak::Error> {
-    let pak_reader = pak.clone().reader.clone().unwrap();
-
-    let mount_point = PathBuf::from(pak_reader.mount_point());
-    let prefix = Path::new("../../../");
-    
+pub fn extract_pak_to_dir(pak: &InstallableMod, install_dir: PathBuf) -> Result<(), String> {
     info!("[ExtractPak] mod_name={}, mod_path={}", pak.mod_name, pak.mod_path.display());
-    info!("[ExtractPak] mount_point='{}', install_dir={}", mount_point.display(), install_dir.display());
-    let all_files = pak_reader.files();
-    info!("[ExtractPak] {} files in PAK. First 5: {:?}", all_files.len(), &all_files[..all_files.len().min(5)]);
-    
-    // Write debug info to a file for easy inspection
+    info!("[ExtractPak] install_dir={}", install_dir.display());
+
+    // Write debug info
     if let Some(config_dir) = dirs::config_dir() {
         let debug_log = config_dir.join("Repak-X").join("extract_pak_debug.log");
         let _ = std::fs::create_dir_all(debug_log.parent().unwrap());
-        let mut log_content = format!("=== ExtractPak Debug ({}) ===\n", chrono::Local::now().format("%H:%M:%S"));
-        log_content += &format!("mod_name: {}\n", pak.mod_name);
-        log_content += &format!("mod_path: {}\n", pak.mod_path.display());
-        log_content += &format!("mod_path exists: {}\n", pak.mod_path.exists());
-        log_content += &format!("mount_point: '{}'\n", mount_point.display());
-        log_content += &format!("install_dir: {}\n", install_dir.display());
-        log_content += &format!("total_files: {}\n", all_files.len());
-        log_content += "first 10 files:\n";
-        for f in all_files.iter().take(10) {
-            let full = mount_point.join(f);
-            let stripped = full.strip_prefix(prefix).map(|p| p.display().to_string()).unwrap_or("STRIP_FAILED".to_string());
-            log_content += &format!("  entry='{}' -> full='{}' -> stripped='{}'\n", f, full.display(), stripped);
-        }
+        let log_content = format!(
+            "=== ExtractPak Debug ({}) ===\nmod_name: {}\nmod_path: {}\ninstall_dir: {}\n",
+            chrono::Local::now().format("%H:%M:%S"),
+            pak.mod_name,
+            pak.mod_path.display(),
+            install_dir.display()
+        );
         let _ = std::fs::write(&debug_log, &log_content);
-        info!("[ExtractPak] Debug log written to: {}", debug_log.display());
     }
 
-    struct UnpakEntry {
-        entry_path: String,
-        out_path: PathBuf,
-        out_dir: PathBuf,
-    }
+    fs::create_dir_all(&install_dir)
+        .map_err(|e| format!("Failed to create output dir: {}", e))?;
 
-    let entries = pak_reader
-        .files()
-        .into_iter()
-        .map(|entry| {
-            let full_path = mount_point.join(&entry);
-            let out_path =
-                install_dir
-                    .join(full_path.strip_prefix(prefix).map_err(|_| {
-                        repak::Error::PrefixMismatch {
-                            path: full_path.to_string_lossy().to_string(),
-                            prefix: prefix.to_string_lossy().to_string(),
-                        }
-                    })?)
-                    .clean();
+    uasset_toolkit::extract_pak_all(
+        pak.mod_path.to_str().unwrap_or_default(),
+        install_dir.to_str().unwrap_or_default(),
+        Some(AES_KEY_HEX),
+    ).map_err(|e| format!("Failed to extract PAK: {}", e))?;
 
-            if !out_path.starts_with(&install_dir) {
-                return Err(repak::Error::WriteOutsideOutput(
-                    out_path.to_string_lossy().to_string(),
-                ));
-            }
-
-            let out_dir = out_path.parent().expect("will be a file").to_path_buf();
-
-            Ok(Some(UnpakEntry {
-                entry_path: entry.to_string(),
-                out_path,
-                out_dir,
-            }))
-        })
-        .filter_map(|x| x.transpose())
-        .collect::<Result<Vec<_>, _>>()?;
-
-    entries.par_iter().for_each(|entry| {
-        log::debug!("Unpacking: {}", entry.entry_path);
-        fs::create_dir_all(&entry.out_dir).unwrap();
-        let mut reader = BufReader::new(File::open(&pak.mod_path).unwrap());
-        let buffer = pak_reader
-            .get(&entry.entry_path, &mut reader)
-            .expect("Failed to read entry");
-        File::create(&entry.out_path)
-            .unwrap()
-            .write_all(&buffer)
-            .unwrap();
-        log::info!("Unpacked: {:?}", entry.out_path);
-    });
+    info!("[ExtractPak] Extraction complete to {}", install_dir.display());
     Ok(())
 }
 
@@ -108,125 +49,100 @@ pub fn create_repak_from_pak(
     pak: &InstallableMod,
     mod_dir: PathBuf,
     packed_files_count: &AtomicI32,
-) -> Result<(), repak::Error> {
-    // extract the pak first into a temporary dir
-    let temp_dir = tempdir().map_err(repak::Error::Io)?;
-    let temp_path = temp_dir.path(); // Get the path of the temporary directory
+) -> Result<(), String> {
+    let temp_dir = tempdir().map_err(|e| format!("Failed to create temp dir: {}", e))?;
+    let temp_path = temp_dir.path().to_path_buf();
 
-    extract_pak_to_dir(pak, temp_path.to_path_buf())?;
+    extract_pak_to_dir(pak, temp_path.clone())?;
     convert_to_iostore_directory(
         pak,
         mod_dir.clone(),
-        temp_path.to_path_buf(),
+        temp_path,
         packed_files_count,
-    )?;
-    // repak_dir(pak, PathBuf::from(temp_path), mod_dir,packed_files_count)?;
+    ).map_err(|e| format!("IoStore conversion failed: {}", e))?;
     Ok(())
 }
 
-// leaving this here for legacy reasons
+/// Optimized version: Creates IoStore directly from PAK without Rust-side temp directory.
+/// Uses UAssetTool's internal PAK extraction (single JSON call vs extract + convert).
+pub fn create_repak_from_pak_fast(
+    pak: &InstallableMod,
+    mod_dir: PathBuf,
+    packed_files_count: &AtomicI32,
+) -> Result<(), String> {
+    let output_base = mod_dir.join(&pak.mod_name);
+
+    info!("[CreateRepakFast] Creating IoStore directly from PAK: {}", pak.mod_path.display());
+    info!("[CreateRepakFast] Output base: {}", output_base.display());
+
+    let result = uasset_toolkit::create_mod_iostore_from_pak(
+        &output_base.to_string_lossy(),
+        &pak.mod_path.to_string_lossy(),
+        Some(&pak.mount_point),
+        Some(true),              // Enable compression
+        Some(AES_KEY_HEX),       // Use Marvel Rivals AES key
+        pak.parallel_processing, // Toggle: false=50%, true=75% CPU threads
+        pak.obfuscate,           // Encrypt if enabled
+    ).map_err(|e| format!("Failed to create IoStore from PAK: {}", e))?;
+
+    info!("[CreateRepakFast] IoStore created: utoc={}, converted={} files",
+        result.utoc_path, result.converted_count);
+
+    packed_files_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+
 pub fn repak_dir(
     pak: &InstallableMod,
     to_pak_dir: PathBuf,
     mod_dir: PathBuf,
     installed_mods_ptr: &AtomicI32,
-) -> Result<(), repak::Error> {
-    let mut pak_name = pak.mod_name.clone();
-    pak_name.push_str(".pak");
-    let output_file = File::create(mod_dir.join(pak_name))?;
+) -> Result<(), String> {
+    let pak_name = format!("{}.pak", pak.mod_name);
+    let output_path = mod_dir.join(&pak_name);
 
     let mut paths = vec![];
-    collect_files(&mut paths, &to_pak_dir)?;
+    collect_files(&mut paths, &to_pak_dir)
+        .map_err(|e| format!("Failed to collect files: {}", e))?;
 
-    let processed_textures: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    // Filter out temporary/backup files and .ubulk files for NoMipmaps textures
     let original_count = paths.len();
     paths.retain(|p| {
         let file_name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-        
-        // Check if this is a .ubulk file for a processed NoMipmaps texture
-        let is_processed_ubulk = if ext == "ubulk" {
-            if let Some(stem) = p.file_stem() {
-                let texture_base = stem.to_string_lossy().to_string();
-                if processed_textures.contains(&texture_base) {
-                    info!("Excluding .ubulk from regular PAK for NoMipmaps texture: {}", file_name);
-                    true
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-        
-        // Exclude backup files, temp files, and .ubulk for NoMipmaps textures
-        let should_exclude = ext == "bak" 
-            || ext == "temp" 
-            || file_name == "patched_files"
-            || is_processed_ubulk;
-        
+        let should_exclude = ext == "bak" || ext == "temp" || file_name == "patched_files";
         if should_exclude {
             debug!("Excluding from PAK: {}", p.display());
         }
-        
         !should_exclude
     });
-    
+
     if paths.len() != original_count {
-        info!("Filtered {} files from PAK (temp/backup/.ubulk)", original_count - paths.len());
+        info!("Filtered {} files from PAK (temp/backup)", original_count - paths.len());
     }
 
     paths.sort();
 
-    let builder = repak::PakBuilder::new()
-        .compression(vec![pak.compression])
-        .key(AES_KEY.clone().0);
-
-    let mut pak_writer = builder.writer(
-        BufWriter::new(output_file),
-        Version::V11,
-        pak.mount_point.clone(),
-        Some(pak.path_hash_seed.parse().unwrap()),
-    );
-    let entry_builder = pak_writer.entry_builder();
-
-    let partial_entry = paths
+    let file_entries: Vec<(String, String)> = paths
         .par_iter()
-        .map(|p| {
-            let rel = &p
-                .strip_prefix(to_pak_dir.clone())
-                .expect("file not in input directory")
-                .to_slash()
-                .expect("failed to convert to slash path");
-
-            let entry = entry_builder
-                .build_entry(true, std::fs::read(p).expect("WTF"), rel)
-                .expect("Failed to build entry");
-            (rel.to_string(), entry)
+        .filter_map(|p| {
+            let rel = p.strip_prefix(&to_pak_dir).ok()
+                .and_then(|r| r.to_slash())
+                .map(|r| r.to_string())?;
+            let abs = p.to_str().map(|s| s.to_string())?;
+            Some((rel, abs))
         })
-        .collect::<Vec<_>>();
+        .collect();
 
-    let mut rel_paths = vec![];
-    for (path, entry) in partial_entry {
-        debug!("Writing: {}", path);
-        pak_writer.write_entry(path.clone(), entry)?;
-        installed_mods_ptr.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        rel_paths.push(path);
-    }
+    let seed = pak.path_hash_seed.parse::<u64>().ok();
+    uasset_toolkit::create_pak(
+        output_path.to_str().unwrap_or_default(),
+        file_entries,
+        Some(&pak.mount_point),
+        seed,
+        Some(AES_KEY_HEX),
+    ).map_err(|e| format!("Failed to create PAK: {}", e))?;
 
-    let rel_paths_bytes: Vec<u8> = rel_paths.join("\n").into_bytes();
-
-    let entry = entry_builder
-        .build_entry(true, rel_paths_bytes, "chunknames")
-        .expect("Failed to build entry");
-
-    pak_writer.write_entry("chunknames".to_string(), entry)?;
-    pak_writer.write_index()?;
-
-    log::info!("Wrote pak file successfully");
-    Ok::<(), repak::Error>(())
+    installed_mods_ptr.fetch_add(paths.len() as i32, std::sync::atomic::Ordering::SeqCst);
+    info!("Wrote pak file successfully");
+    Ok(())
 }
