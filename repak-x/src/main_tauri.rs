@@ -2062,10 +2062,12 @@ async fn update_mod(
     old_mod_path: String,
     new_mod_source: String,
     preserve_name: bool,
+    #[allow(non_snake_case)]
+    obfuscate: Option<bool>,
     window: Window,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<UpdateModResult, String> {
-    info!("update_mod called: old={}, new={}, preserve_name={}", old_mod_path, new_mod_source, preserve_name);
+    info!("update_mod called: old={}, new={}, preserve_name={}, obfuscate={:?}", old_mod_path, new_mod_source, preserve_name, obfuscate);
     
     let old_path = PathBuf::from(&old_mod_path);
     let new_source = PathBuf::from(&new_mod_source);
@@ -2219,7 +2221,8 @@ async fn update_mod(
     
     let state_guard = state.lock().unwrap();
     let mod_directory = state_guard.game_path.clone();
-    let obfuscate = state_guard.obfuscate;
+    // Use per-update obfuscate param if provided; fallback to global state for backward-compat
+    let obfuscate = obfuscate.unwrap_or(state_guard.obfuscate);
     drop(state_guard);
     
     let paths = vec![new_source.clone()];
